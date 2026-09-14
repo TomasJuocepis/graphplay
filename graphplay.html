@@ -1,0 +1,1271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hub & spoke — graph explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F4F6F5;
+    --ink: #22303C;
+    --muted: #6B7681;
+    --line: #B9C2CA;
+    --rule: #D7DDE2;
+    --accent: #3D6BE5;
+    --accent-soft: #EAF0FF;
+    --font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 14px;
+    overflow: hidden;
+  }
+  svg#stage { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .bar {
+    position: fixed; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; gap: 12px; pointer-events: none;
+  }
+  .bar > * { pointer-events: auto; }
+  .bar.top { top: 0; }
+  .bar.bottom { bottom: 0; }
+  h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+  h1 small { font-weight: 400; color: var(--muted); margin-left: 8px; }
+
+  .controls { display: flex; gap: 8px; }
+  .bar.top .controls { flex-direction: column; align-items: flex-end; gap: 6px; }
+  .bar.top { align-items: flex-start; }
+  select, button {
+    font: inherit; font-size: 13px; color: var(--ink);
+    background: #fff; border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 10px; cursor: pointer;
+  }
+  select { max-width: 46vw; }
+  select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button:hover { border-color: var(--ink); }
+  .status { color: var(--muted); font-size: 13px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; line-height: 1.3; }
+  .bar.bottom { align-items: flex-end; }
+  .status b { color: var(--ink); font-weight: 500; }
+
+  .bar.bottom .controls { flex-direction: column; align-items: flex-end; gap: 6px; }
+  .bar.bottom .controls .row { display: flex; gap: 8px; }
+  .panel {
+    background: #fff; border: 1px solid var(--rule); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(34,48,60,0.10); font-size: 13px; line-height: 1.5;
+  }
+  #gamemenu { position: fixed; right: 18px; bottom: 96px; padding: 6px; min-width: 200px; }
+  #gamemenu[hidden] { display: none; }
+  #gamemenu h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 4px 8px 6px; }
+  #gamemenu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 5px; }
+  #gamemenu button:hover { background: var(--bg); }
+  #gamepanel { position: fixed; right: 18px; top: 50%; transform: translateY(-50%); width: 200px; padding: 12px 14px; }
+  #gamepanel[hidden] { display: none; }
+  #gamepanel .eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  #gamepanel .dest { font-size: 15px; font-weight: 600; margin: 2px 0 8px; word-break: break-word; }
+  #gamepanel .meta { color: var(--muted); margin-bottom: 10px; }
+  #gamepanel .meta b { color: var(--ink); font-weight: 500; }
+  #editor { position: fixed; inset: 0; background: rgba(34,48,60,0.28); display: flex; align-items: center; justify-content: center; z-index: 20; }
+  #editor[hidden] { display: none; }
+  #editor h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+  #modal { position: fixed; inset: 0; background: rgba(34,48,60,0.28); display: flex; align-items: center; justify-content: center; z-index: 20; }
+  #modal[hidden] { display: none; }
+  #modal .panel { width: min(360px, calc(100vw - 36px)); padding: 18px 20px; }
+  #modal h2 { margin: 0 0 8px; font-size: 17px; font-weight: 600; }
+  #modal p { margin: 0 0 8px; }
+  #modal .score { font-size: 34px; font-weight: 600; margin: 4px 0 2px; }
+  #modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  #modal .primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  #editor .panel { width: min(720px, calc(100vw - 36px)); padding: 16px 18px; }
+  #editor textarea {
+    width: 100%; height: min(60vh, 520px); resize: vertical; font: 12.5px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px; box-sizing: border-box;
+  }
+  #editor .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+  #editor .err { color: #B3261E; font-size: 12.5px; margin: 6px 0 0; min-height: 1.2em; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; align-items: center; }
+  .modal-actions .spacer { flex: 1; }
+  #help {
+    position: fixed; right: 18px; bottom: 96px; width: min(360px, calc(100vw - 36px));
+    background: #fff; border: 1px solid var(--rule); border-radius: 8px;
+    padding: 14px 16px; font-size: 13px; line-height: 1.5; color: var(--ink);
+    box-shadow: 0 8px 24px rgba(34,48,60,0.10);
+  }
+  #help[hidden] { display: none; }
+  #help h2 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+  #help p { margin: 0 0 8px; }
+  #help code { background: var(--bg); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+  #help ul { margin: 0 0 8px; padding-left: 18px; }
+
+  #empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; color: var(--muted); padding: 40px; pointer-events: none;
+  }
+  #empty[hidden] { display: none; }
+
+  #tip {
+    position: fixed; z-index: 10; pointer-events: none;
+    background: var(--ink); color: #fff; font-size: 12.5px; line-height: 1.35;
+    padding: 5px 8px; border-radius: 5px; max-width: 320px;
+    opacity: 0; transition: opacity 120ms; white-space: pre-wrap; word-break: break-word;
+  }
+  #tip.on { opacity: 1; }
+
+  /* graph elements */
+  .edge { stroke: var(--line); stroke-width: 1.4; fill: none; }
+  .elabel {
+    font-size: 11.5px; fill: var(--muted); paint-order: stroke; stroke: var(--bg); stroke-width: 4px;
+    stroke-linejoin: round; user-select: none;
+  }
+  .elabel[data-tip] { cursor: help; }
+  .node circle { fill: #fff; stroke: var(--ink); stroke-width: 1.5; transition: fill 200ms, stroke 200ms; }
+  .node text { font-weight: 500; fill: var(--ink); user-select: none; transition: fill 200ms; }
+  .node.center circle { fill: var(--ink); }
+  .node.center text { fill: #fff; }
+  .node.nbr { cursor: pointer; }
+  .node.nbr:hover circle, .node.nbr:focus-visible circle { stroke: var(--accent); stroke-width: 2; fill: var(--accent-soft); }
+  .node.nbr:focus { outline: none; }
+  .node.center.tinted circle { stroke-width: 3; }
+  .node.center.tinted text { fill: var(--ink); }
+  #scc { border-width: 1px; }
+  #condense[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .elabels.fade { animation: fadein 260ms ease-out both; }
+  @keyframes fadein { from { opacity: 0 } to { opacity: 1 } }
+  @media (prefers-reduced-motion: reduce) { .elabels.fade { animation: none; } }
+</style>
+</head>
+<body>
+<svg id="stage" xmlns="http://www.w3.org/2000/svg" aria-label="Graph view">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="#B9C2CA" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <g class="edges"></g>
+  <g class="elabels"></g>
+  <g class="nodes"></g>
+</svg>
+<div id="empty" hidden></div>
+
+<div class="bar top">
+  <h1>Hub &amp; spoke <small>click a neighbor to move there</small></h1>
+  <div class="controls">
+    <select id="dataset" aria-label="Dataset">
+      <option value="__import">Import a file…</option>
+      <option value="__wordlist">Import a word list (Levenshtein graph)…</option>
+      <option value="scrabble" selected>Short Scrabble Words</option>
+      <option value="cities">World Cities (1M+) – Five Nearest Neighbors</option>
+    </select>
+    <select id="component" aria-label="Subgraph" hidden></select>
+    <select id="scc" aria-label="Strongly connected component" hidden></select>
+    <button id="condense" type="button" aria-pressed="false" hidden>Show condensation</button>
+    <input id="file" type="file" accept=".txt,.csv,.tsv,.edges,.edgelist,.dot,.gv,.json,.graphml,.xml,text/plain" hidden>
+    <input id="wordfile" type="file" accept=".txt,.lst,.dic,text/plain" hidden>
+  </div>
+</div>
+
+<div class="bar bottom">
+  <div class="status" id="status"></div>
+  <div class="controls">
+    <div class="row"><button id="playbtn" type="button" aria-expanded="false" aria-controls="gamemenu">Play</button></div>
+    <div class="row">
+      <button id="editbtn" type="button">Edit dataset</button>
+      <button id="exportbtn" type="button">Export</button>
+    </div>
+    <div class="row">
+      <button id="random" type="button">Random node</button>
+      <button id="helpbtn" type="button" aria-expanded="false" aria-controls="help">Import formats</button>
+    </div>
+  </div>
+</div>
+
+<div id="gamemenu" class="panel" hidden>
+  <h2>Games</h2>
+  <button type="button" data-game="destination">Find a Destination</button>
+</div>
+<div id="gamepanel" class="panel" hidden aria-live="polite">
+  <div class="eyebrow">Destination</div>
+  <div class="dest" id="gamedest"></div>
+  <div class="meta">Steps taken: <b id="gamesteps">0</b></div>
+  <button id="giveup" type="button">Give Up</button>
+</div>
+<div id="editor" hidden role="dialog" aria-modal="true" aria-labelledby="editortitle">
+  <div class="panel">
+    <h2 id="editortitle"></h2>
+    <textarea id="editortext" spellcheck="false" aria-label="Dataset text"></textarea>
+    <p class="hint" id="editorhint"></p>
+    <p class="err" id="editorerr"></p>
+    <div class="modal-actions">
+      <label id="exportfmtwrap">Format
+        <select id="exportfmt" aria-label="Export format">
+          <option value="edgelist">Edge list (.txt)</option>
+          <option value="json">JSON (.json)</option>
+          <option value="dot">DOT / Graphviz (.gv)</option>
+        </select>
+      </label>
+      <span class="spacer"></span>
+      <button id="editorcancel" type="button">Cancel</button>
+      <button id="editorok" type="button" class="primary"></button>
+    </div>
+  </div>
+</div>
+<div id="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modaltitle">
+  <div class="panel">
+    <h2 id="modaltitle"></h2>
+    <div id="modalbody"></div>
+    <div class="actions">
+      <button id="modalstop" type="button">Stop Playing</button>
+      <button id="modalagain" type="button" class="primary"></button>
+    </div>
+  </div>
+</div>
+
+<div id="help" hidden>
+  <h2>Files you can import</h2>
+  <p><b>Edge list</b> — one edge per line: <code>A B</code>, <code>A,B</code>, <code>A -- B</code> (undirected) or <code>A -&gt; B</code> (directed). An optional third column (or trailing text) becomes the edge name. Quote names with spaces. A line reading <code>directed</code> makes plain edges directed. A line with one name is an isolated node.</p>
+  <p><b>DOT</b> (<code>.dot</code>, <code>.gv</code>) — <code>graph</code> / <code>digraph</code> with <code>label=</code> attributes on edges.</p>
+  <p><b>GraphML</b> — <code>edgedefault</code>, per-edge <code>directed</code>, and label/weight data keys.</p>
+  <p><b>JSON</b> — <code>{ "directed": false, "nodes": [...], "edges": [{"source","target","label"}] }</code>.</p>
+  <p>When a subgraph has directed edges, its strongly connected components are listed in a third menu (a component is a source when nothing leads into it from other components, a sink when nothing leads out, and middle otherwise). Node colors match the component. "Show condensation" swaps the view for the condensation graph, where each node is one component and each edge counts the underlying edges between two components.</p>
+  <p><b>Word list</b> — a plain file with one word per line (a dictionary such as the public-domain ENABLE list) becomes a graph where words are linked when they differ by one letter, like the Short Scrabble Words preset. You choose the maximum word length.</p>
+  <p><b>Edit dataset</b> opens the current graph as text you can change and re-apply; <b>Export</b> downloads it as an edge list, JSON, or DOT file (all three re-import here).</p>
+  <p>The city set is a curated list of about 300 cities with populations over one million; distances are great-circle, in km.</p>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------------------------------------------------------------- utilities */
+const FONT_FAMILY = '"IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif';
+const mctx = document.createElement('canvas').getContext('2d');
+function textWidth(s, fs, weight = 500) {
+  mctx.font = `${weight} ${fs}px ${FONT_FAMILY}`;
+  return mctx.measureText(s).width;
+}
+const svgNS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(svgNS, tag);
+  for (const k in attrs) if (attrs[k] !== undefined && attrs[k] !== null) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const lerp = (a, b, t) => a + (b - a) * t;
+const fmtInt = n => n.toLocaleString('en-US');
+
+/* ---------------------------------------------------------------- graph model */
+class Graph {
+  constructor(nodes, edges) {
+    this.labels = new Map();            // id -> label
+    this.out = new Map();               // id -> Map(nbr -> {dirOnly, label})
+    this.und = new Map();               // id -> Set(nbr)  (weak connectivity)
+    this.edgeCount = 0;
+    const add = (id, label) => {
+      if (!this.labels.has(id)) { this.labels.set(id, label || id); this.out.set(id, new Map()); this.und.set(id, new Set()); }
+      else if (label && this.labels.get(id) === id) this.labels.set(id, label);
+    };
+    for (const n of nodes) add(n.id, n.label);
+    const link = (a, b, dirOnly, label) => {
+      const m = this.out.get(a);
+      const cur = m.get(b);
+      if (!cur) m.set(b, { dirOnly, label: label || '' });
+      else { cur.dirOnly = cur.dirOnly && dirOnly; if (!cur.label && label) cur.label = label; }
+    };
+    for (const e of edges) {
+      if (e.a === e.b) continue;
+      add(e.a); add(e.b);
+      this.edgeCount++;
+      if (e.directed) link(e.a, e.b, true, e.label);
+      else { link(e.a, e.b, false, e.label); link(e.b, e.a, false, e.label); }
+      this.und.get(e.a).add(e.b); this.und.get(e.b).add(e.a);
+    }
+    this.components = this.computeComponents();
+  }
+  computeComponents() {
+    const seen = new Set(), comps = [];
+    for (const id of this.labels.keys()) {
+      if (seen.has(id)) continue;
+      const comp = [], stack = [id]; seen.add(id);
+      while (stack.length) {
+        const v = stack.pop(); comp.push(v);
+        for (const w of this.und.get(v)) if (!seen.has(w)) { seen.add(w); stack.push(w); }
+      }
+      comps.push(comp);
+    }
+    comps.sort((x, y) => y.length - x.length);
+    return comps;
+  }
+  /* Tarjan's algorithm (iterative) over the nodes of one weakly connected component.
+     Returns null when the component has no directed edges. Cached per component. */
+  sccs(compIndex) {
+    if (!this._sccCache) this._sccCache = new Map();
+    if (this._sccCache.has(compIndex)) return this._sccCache.get(compIndex);
+    const comp = this.components[compIndex];
+    let hasDirected = false;
+    for (const v of comp) { for (const e of this.out.get(v).values()) if (e.dirOnly) { hasDirected = true; break; } if (hasDirected) break; }
+    let result = null;
+    if (hasDirected) {
+      const index = new Map(), low = new Map(), onStack = new Set(), stack = [], comps = [];
+      let idx = 0;
+      for (const root of comp) {
+        if (index.has(root)) continue;
+        const work = [[root, this.out.get(root).keys()]];
+        index.set(root, idx); low.set(root, idx); idx++; stack.push(root); onStack.add(root);
+        while (work.length) {
+          const [v, it] = work[work.length - 1];
+          const nx = it.next();
+          if (!nx.done) {
+            const w = nx.value;
+            if (!index.has(w)) { index.set(w, idx); low.set(w, idx); idx++; stack.push(w); onStack.add(w); work.push([w, this.out.get(w).keys()]); }
+            else if (onStack.has(w)) low.set(v, Math.min(low.get(v), index.get(w)));
+          } else {
+            work.pop();
+            if (work.length) { const u = work[work.length - 1][0]; low.set(u, Math.min(low.get(u), low.get(v))); }
+            if (low.get(v) === index.get(v)) {
+              const ids = []; let w;
+              do { w = stack.pop(); onStack.delete(w); ids.push(w); } while (w !== v);
+              comps.push(ids);
+            }
+          }
+        }
+      }
+      comps.sort((a, b) => b.length - a.length);
+      const of = new Map();
+      comps.forEach((ids, i) => ids.forEach(id => of.set(id, i)));
+      const indeg = new Array(comps.length).fill(0), outdeg = new Array(comps.length).fill(0);
+      for (const v of comp) for (const w of this.out.get(v).keys()) {
+        const a = of.get(v), b = of.get(w);
+        if (a !== b) { outdeg[a]++; indeg[b]++; }
+      }
+      const list = comps.map((ids, i) => ({
+        ids, index: i,
+        kind: indeg[i] === 0 && outdeg[i] === 0 ? 'Isolated' : indeg[i] === 0 ? 'Source' : outdeg[i] === 0 ? 'Sink' : 'Middle'
+      }));
+      result = { list, of };
+    }
+    this._sccCache.set(compIndex, result);
+    return result;
+  }
+  /* Condensation DAG of one component: node "scc:i" per SCC, one directed edge per pair of SCCs
+     labelled with the number of underlying edges. Cached alongside the SCC result. */
+  condensation(compIndex) {
+    const info = this.sccs(compIndex);
+    if (!info) return null;
+    if (info.graph) return info.graph;
+    const counts = new Map();
+    for (const v of this.components[compIndex]) for (const w of this.out.get(v).keys()) {
+      const a = info.of.get(v), b = info.of.get(w);
+      if (a === b) continue;
+      const k = a + ':' + b; counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    const nodes = info.list.map((c, i) => ({ id: 'scc:' + i, label: `${c.kind} SCC ${i + 1} (${fmtInt(c.ids.length)} node${c.ids.length === 1 ? '' : 's'})` }));
+    const edges = [...counts].map(([k, n]) => { const [a, b] = k.split(':');
+      return { a: 'scc:' + a, b: 'scc:' + b, directed: true, label: `${fmtInt(n)} edge${n === 1 ? '' : 's'}` }; });
+    info.graph = new Graph(nodes, edges);
+    return info.graph;
+  }
+  neighbors(id) {
+    const res = [];
+    for (const [nbr, e] of this.out.get(id)) {
+      const mutual = this.out.get(nbr).has(id);
+      res.push({ id: nbr, label: this.labels.get(nbr), arrow: e.dirOnly && !mutual, name: e.label });
+    }
+    res.sort((x, y) => x.label.localeCompare(y.label, undefined, { numeric: true, sensitivity: 'base' }));
+    return res;
+  }
+}
+
+/* ---------------------------------------------------------------- parsers */
+function parseGraphText(text) {
+  const t = text.trim();
+  if (!t) throw new Error('The file is empty.');
+  if (t[0] === '<' && /graphml/i.test(t.slice(0, 2000))) return parseGraphML(t);
+  if (t[0] === '{' || t[0] === '[') { try { return parseJSON(t); } catch (e) { /* fall through */ } }
+  if (/^\s*(strict\s+)?(di)?graph\b[^{]*\{/i.test(t)) return parseDOT(t);
+  return parseEdgeList(t);
+}
+
+function parseJSON(t) {
+  const j = JSON.parse(t);
+  const nodes = [], edges = [];
+  const list = Array.isArray(j) ? j : (j.edges || j.links || []);
+  const dflt = !!(j && j.directed);
+  for (const n of (j.nodes || [])) {
+    if (typeof n === 'string' || typeof n === 'number') nodes.push({ id: String(n) });
+    else nodes.push({ id: String(n.id ?? n.name ?? n.label), label: n.label || n.name ? String(n.label || n.name) : undefined });
+  }
+  for (const e of list) {
+    if (Array.isArray(e)) edges.push({ a: String(e[0]), b: String(e[1]), directed: dflt, label: e[2] != null ? String(e[2]) : '' });
+    else edges.push({
+      a: String(e.source ?? e.from ?? e.a ?? e.u), b: String(e.target ?? e.to ?? e.b ?? e.v),
+      directed: e.directed != null ? !!e.directed : dflt,
+      label: e.label != null ? String(e.label) : (e.name != null ? String(e.name) : (e.weight != null ? String(e.weight) : ''))
+    });
+  }
+  if (!nodes.length && !edges.length) throw new Error('No nodes or edges found in the JSON.');
+  return { nodes, edges };
+}
+
+function parseGraphML(t) {
+  const doc = new DOMParser().parseFromString(t, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('The GraphML could not be parsed.');
+  const keys = {};
+  for (const k of doc.getElementsByTagName('key')) keys[k.getAttribute('id')] = (k.getAttribute('attr.name') || '').toLowerCase();
+  const dataOf = (elm, wanted) => {
+    for (const d of elm.children) if (d.localName === 'data') {
+      const nm = keys[d.getAttribute('key')] || d.getAttribute('key').toLowerCase();
+      if (wanted.includes(nm)) return d.textContent.trim();
+    }
+    return '';
+  };
+  const g = doc.getElementsByTagName('graph')[0];
+  const dflt = g ? g.getAttribute('edgedefault') === 'directed' : false;
+  const nodes = [], edges = [];
+  for (const n of doc.getElementsByTagName('node')) nodes.push({ id: n.getAttribute('id'), label: dataOf(n, ['label', 'name', 'title']) || undefined });
+  for (const e of doc.getElementsByTagName('edge')) {
+    const d = e.getAttribute('directed');
+    edges.push({ a: e.getAttribute('source'), b: e.getAttribute('target'),
+      directed: d != null ? d === 'true' : dflt, label: dataOf(e, ['label', 'name', 'weight', 'title']) });
+  }
+  return { nodes, edges };
+}
+
+function parseDOT(t) {
+  const src = t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*#.*$/gm, '').replace(/(^|[^:\\])\/\/.*$/gm, '$1');
+  const open = src.indexOf('{');
+  const isDigraph = /\bdigraph\b/i.test(src.slice(0, open));
+  const body = src.slice(open + 1, src.lastIndexOf('}'));
+  const re = /"((?:[^"\\]|\\.)*)"|<([^>]*)>|([A-Za-z_\u0080-\uffff][\w\u0080-\uffff]*|-?\.?\d[\d.]*)|(->|--|[\[\]{};=,:])/g;
+  const toks = [];
+  let m;
+  while ((m = re.exec(body))) {
+    if (m[1] !== undefined) toks.push({ id: m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ') });
+    else if (m[2] !== undefined) toks.push({ id: m[2].replace(/<[^>]*>/g, '').trim() });
+    else if (m[3] !== undefined) toks.push({ id: m[3] });
+    else toks.push({ op: m[4] });
+  }
+  const nodes = [], edges = [];
+  const nodeLabel = new Map();
+  let i = 0;
+  const peek = () => toks[i];
+  const readAttrs = () => {           // assumes toks[i] is '['
+    const attrs = {}; i++;
+    while (i < toks.length && !(toks[i].op === ']')) {
+      const k = toks[i]; i++;
+      if (toks[i] && toks[i].op === '=') { i++; const v = toks[i]; i++; if (k.id !== undefined && v && v.id !== undefined) attrs[k.id.toLowerCase()] = v.id; }
+      if (toks[i] && (toks[i].op === ',' || toks[i].op === ';')) i++;
+    }
+    i++;
+    return attrs;
+  };
+  const skipPort = () => { while (peek() && peek().op === ':') { i++; if (peek() && peek().id !== undefined) i++; } };
+  while (i < toks.length) {
+    const tk = toks[i];
+    if (tk.op) { i++; continue; }
+    const kw = tk.id.toLowerCase();
+    if (kw === 'subgraph') { i++; if (peek() && peek().id !== undefined) i++; continue; }
+    if ((kw === 'graph' || kw === 'node' || kw === 'edge') && toks[i + 1] && toks[i + 1].op === '[') { i++; readAttrs(); continue; }
+    if (toks[i + 1] && toks[i + 1].op === '=') { i += 3; continue; }
+    // statement starting with an id
+    const chain = [tk.id]; i++; skipPort();
+    while (peek() && (peek().op === '->' || peek().op === '--')) {
+      i++;
+      if (peek() && peek().id !== undefined) { chain.push(peek().id); i++; skipPort(); } else break;
+    }
+    let attrs = {};
+    if (peek() && peek().op === '[') attrs = readAttrs();
+    if (chain.length === 1) {
+      nodes.push({ id: chain[0] });
+      if (attrs.label) nodeLabel.set(chain[0], attrs.label);
+    } else {
+      const dir = attrs.dir ? attrs.dir.toLowerCase() : '';
+      const directed = dir === 'none' ? false : dir === 'forward' ? true : isDigraph;
+      for (let k = 0; k + 1 < chain.length; k++) edges.push({ a: chain[k], b: chain[k + 1], directed, label: attrs.label || attrs.weight || '' });
+    }
+  }
+  for (const n of nodes) if (nodeLabel.has(n.id)) n.label = nodeLabel.get(n.id);
+  if (!nodes.length && !edges.length) throw new Error('No nodes or edges found in the DOT file.');
+  return { nodes, edges };
+}
+
+function parseEdgeList(t) {
+  const nodes = [], edges = [];
+  let dflt = false, first = true;
+  const tokRe = /"([^"]*)"|'([^']*)'|[^\s,;\t]+/g;
+  const tokenize = s => { const out = []; let m; while ((m = tokRe.exec(s))) out.push(m[1] ?? m[2] ?? m[0]); return out; };
+  const cleanLabel = parts => {
+    const s = parts.join(' ').trim();
+    const lm = s.match(/label\s*=\s*"?([^"\]]*)"?/i);
+    if (lm) return lm[1].trim();
+    return s.replace(/^\[|\]$/g, '').trim();
+  };
+  for (let raw of t.split(/\r?\n/)) {
+    let line = raw.replace(/(^|\s)(#|%|\/\/).*$/, '').trim();
+    if (!line) continue;
+    const low = line.toLowerCase();
+    if (low === 'directed' || low === 'digraph') { dflt = true; continue; }
+    if (low === 'undirected' || low === 'graph') { dflt = false; continue; }
+    if (first) {
+      first = false;
+      const hdr = tokenize(low);
+      if (hdr.length >= 2 && ['source', 'target', 'from', 'to', 'src', 'dst', 'node1', 'node2', 'u', 'v'].includes(hdr[0]) &&
+          ['source', 'target', 'from', 'to', 'src', 'dst', 'node1', 'node2', 'u', 'v'].includes(hdr[1])) continue;
+    }
+    const arrow = line.match(/\s*(<->|->|--)\s*/);
+    if (arrow) {
+      const a = tokenize(line.slice(0, arrow.index))[0];
+      const rest = tokenize(line.slice(arrow.index + arrow[0].length));
+      if (a && rest.length) edges.push({ a, b: rest[0], directed: arrow[1] === '->', label: cleanLabel(rest.slice(1)) });
+      continue;
+    }
+    const parts = tokenize(line);
+    if (parts.length === 1) nodes.push({ id: parts[0] });
+    else if (parts.length >= 2) edges.push({ a: parts[0], b: parts[1], directed: dflt, label: cleanLabel(parts.slice(2)) });
+  }
+  if (!nodes.length && !edges.length) throw new Error('No edges found. Expected one edge per line, like "A B" or "A -> B".');
+  return { nodes, edges };
+}
+
+/* ---------------------------------------------------------------- preset datasets */
+const SCRABBLE_WORDS = `ad ah am an as at ax ay be bi bo by do eh em en ex go ha he hi ho id if in is it jo ka la lo ma me mi mu my no nu od oe of oh om on op or os ow ox oy pa pe pi re sh si so ta ti to uh um un up us ut we wo xi ya ye yo za
+ace act add ado age ago aid ail aim air ale all and ant any ape apt arc are ark arm art ash ask ate awe axe aye bad bag ban bar bat bay bed bee beg bet bid big bin bit bog boo bow box boy bud bug bun bus but buy bye cab cam can cap car cat cod cog con cop cot cow coy cry cub cud cue cup cut dab dad dam day den dew did die dig dim din dip doe dog don dot dry dub dud due dug dye ear eat eel egg ego elf elk elm end eon era err eve eye fad fan far fat fax fed fee fen few fig fin fir fit fix flu fly foe fog for fox fry fun fur gab gag gal gap gas gel gem get gig gin gnu god got gum gun gut guy gym had hag ham has hat hay hem hen her hew hex hey hid him hip his hit hob hog hop hot how hub hue hug hum hut ice icy ill imp ink inn ion ire irk its ivy jab jag jam jar jaw jay jet jig job jog jot joy jug jut keg ken key kid kin kit lab lad lag lap law lax lay lea led leg let lid lie lip lit lob log lot low lug lye mad man map mar mat maw may men met mid mix mob mod mom mop mow mud mug nab nag nap net new nib nil nip nit nod nor not now nun nut oak oar oat odd ode off oft oil old one opt orb ore our out owe owl own pad pal pan pap par pat paw pay pea peg pen pep per pet pew pie pig pin pip pit ply pod pop pot pro pry pub pug pun pup pus put rag ram ran rap rat raw ray red rib rid rig rim rip rob rod roe rot row rub rue rug rum run rut rye sad sag sap sat saw say sea set sew shy sin sip sir sis sit six ski sky sly sob sod son sop sow soy spa spy sty sub sue sum sun sup tab tag tan tap tar tax tea ten the thy tic tie tin tip toe tog ton too top tot tow toy try tub tug tun two urn use van vat vet vex via vie vow wad wag war was wax way web wed wee wet who why wig win wit woe wok won woo wow wry yak yam yap yaw yen yes yet yew yip you zap zed zen zip zoo
+able ache acid acre aged also arch area army atom aunt auto away axle babe baby back bail bait bake bald ball band bane bang bank bare bark barn base bash bask bass bath bead beak beam bean bear beat beef been beer bell belt bend bent best bill bind bird bite blow blue blur boar boat body bold bolt bomb bond bone book boom boot bore born boss both bowl brag brat bred brew brim bulk bull bump burn bury bush busy cage cake calf call calm came camp cane cape card care carp cart case cash cask cast cave cell chap chat chef chew chin chip chop cite city clam clan clap claw clay clip clog club clue coal coat code coil coin cold colt comb come cone cook cool cope copy cord core cork corn cost cove crab crew crib crop crow cube cult curb cure curl cute dare dark darn dart dash date dawn dead deaf deal dear debt deck deed deep deer dent desk dial dice diet dime dine dirt dish disk dive dock does dole doll dome done doom door dose dote dove down doze drag draw drip drop drug drum dual duck duel dull dumb dump dune dusk dust duty each earl earn ease east easy edge edit else emit envy epic even ever evil exam exit face fact fade fail fair fake fall fame fang fare farm fast fate fawn fear feat feed feel feet fell felt fern file fill film find fine fire firm fish fist five flag flap flat flaw flea fled flew flip flit flop flow flux foal foam foil fold folk fond font food fool foot ford fore fork form fort foul four fowl free fret frog from fuel full fume fund fury fuse fuss gain gait gale gall game gang gape gash gasp gate gave gaze gear germ gift gild gill girl give glad glee glen glow glue glut gnat goad goal goat gold golf gone gong good gore gown grab gram gray grew grid grim grin grip grit grow gulf gull gust hail hair half hall halt hand hang hard hare harm harp hate haul have hawk haze head heal heap hear heat heed heel held helm help herb herd here hero hide high hike hill hint hire hive hold hole home hood hoof hook hoop hope horn hose host hour howl huge hull hump hung hunt hurl hurt husk idea idle inch into iron isle itch jade jail jazz jest join joke jolt jump junk jury just keel keen keep kelp kept kick kill kilo kind king kiss kite knee knew knit knob knot know lace lack lady laid lair lake lamb lame lamp land lane lard lark lash last late lawn lazy lead leaf leak lean leap left lend lens less lest liar lick life lift like lime limp line link lint lion list live load loaf loan lock loft lone long look loom loop lord lore lose loss lost loud love luck lull lump lung lure lurk lush lute mace made maid mail main make male mall malt mane many mare mark mask mass mast mate math maze meal mean meat meek meet melt mend menu mere mesh mess mild mile milk mill mime mind mine mint mist mite moan moat mock mode mold mole monk mood moon moor more moss most moth move much mule mush must mute myth nail name nape navy near neat neck need nest news next nice nine none nook noon nose note noun nude numb oath obey odor oily okay omit once only onto ooze open oral oven over pace pack page paid pail pain pair pale palm pane pang pant park part pass past path pave pawn peak peal pear peat peck peel peer pelt perk pest pier pike pile pill pine pink pint pipe pity plan play plea plod plot plow ploy plug plum plus poem poet pole poll polo pomp pond pony pool poor pope pore pork port pose post pour pout pray prey prim prod prop prow pull pulp pump punk pure push quit quiz race rack raft rage raid rail rain rake ramp rang rank rant rare rash rate rave read real reap rear reed reef reel rein rent rest rice rich ride rift rind ring riot ripe rise risk road roam roar robe rock rode role roll roof room root rope rose rosy rove ruby rude ruin rule rung runt rush rust sack safe sage said sail sake sale salt same sand sane sang sank sash save scan scar seal seam seat sect seed seek seem seen self sell send sent sewn shed shin ship shoe shop shot show shut sick side sift sigh sign silk sill silt sing sink site size skid skim skin skip slab slam slap sled slew slid slim slip slit slot slow slug slum slur smog smug snag snap snip snob snow snub snug soak soap soar sock soda sofa soft soil sold sole solo some song soon soot sore sort soul soup sour spam span spar spat sped spin spit spot spur stab stag star stay stem step stew stir stop stub stud stun such suit sulk sung sunk sure surf swab swam swan swap swat sway swim tack tact tail take tale talk tall tame tank tape tart task taut taxi team tear tell temp tend tent term test text than that them then they thin this thud thug tick tide tidy tier tile till tilt time tint tiny tire toad toil told toll tomb tone tong took tool tore torn toss tour town trap tray tree trek trim trio trip trod trot true tube tuck tuft tuna tune turf turn tusk twig twin type ugly undo unit unto upon urge used user vain vale vane vary vase vast veal veer veil vein vent verb very vest veto vial vice view vile vine visa void volt vote wade wage wail wait wake walk wall wand wane want ward warm warn warp wart wary wash wasp wave wavy weak wear weed week weep weld well went wept were west whet whim whip whom wick wide wife wild will wilt wind wine wing wink wipe wire wise wish wisp with wolf womb wood wool word wore work worm worn wove wrap wren yank yard yarn yawn year yell yelp yoga yoke your zeal zero zinc zone zoom`;
+
+function levenshteinOne(a, b) {
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  if (la === lb) { let d = 0; for (let i = 0; i < la; i++) if (a[i] !== b[i] && ++d > 1) return false; return d === 1; }
+  const [s, l] = la < lb ? [a, b] : [b, a];
+  let i = 0, j = 0, skipped = false;
+  while (i < s.length && j < l.length) {
+    if (s[i] === l[j]) { i++; j++; }
+    else if (skipped) return false;
+    else { skipped = true; j++; }
+  }
+  return true;
+}
+function buildLevenshteinGraph(wordList) {
+  const words = [...new Set(wordList)];
+  const nodes = words.map(w => ({ id: w }));
+  const edges = [];
+  const byLen = new Map();
+  for (const w of words) { if (!byLen.has(w.length)) byLen.set(w.length, []); byLen.get(w.length).push(w); }
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    for (const len of [w.length, w.length + 1]) {
+      const bucket = byLen.get(len); if (!bucket) continue;
+      for (const v of bucket) {
+        if (len === w.length && v <= w) continue;
+        if (levenshteinOne(w, v)) edges.push({ a: w, b: v, directed: false, label: '' });
+      }
+    }
+  }
+  return { nodes, edges };
+}
+
+const CITIES = `Tokyo|35.68|139.69;Delhi|28.61|77.21;Shanghai|31.23|121.47;São Paulo|-23.55|-46.63;Mexico City|19.43|-99.13;Cairo|30.04|31.24;Mumbai|19.08|72.88;Beijing|39.90|116.40;Dhaka|23.81|90.41;Osaka|34.69|135.50;New York|40.71|-74.01;Karachi|24.86|67.01;Buenos Aires|-34.60|-58.38;Chongqing|29.56|106.55;Istanbul|41.01|28.98;Kolkata|22.57|88.36;Manila|14.60|120.98;Lagos|6.52|3.38;Rio de Janeiro|-22.91|-43.17;Tianjin|39.08|117.20;Kinshasa|-4.44|15.27;Guangzhou|23.13|113.26;Los Angeles|34.05|-118.24;Moscow|55.76|37.62;Shenzhen|22.54|114.06;Lahore|31.55|74.34;Bangalore|12.97|77.59;Paris|48.86|2.35;Bogotá|4.71|-74.07;Jakarta|-6.21|106.85;Chennai|13.08|80.27;Lima|-12.05|-77.04;Bangkok|13.76|100.50;Seoul|37.57|126.98;Nagoya|35.18|136.91;Hyderabad|17.39|78.49;London|51.51|-0.13;Tehran|35.69|51.39;Chicago|41.88|-87.63;Chengdu|30.57|104.07;Nanjing|32.06|118.80;Wuhan|30.59|114.31;Ho Chi Minh City|10.82|106.63;Luanda|-8.84|13.23;Ahmedabad|23.02|72.57;Kuala Lumpur|3.14|101.69;Xi'an|34.34|108.94;Hong Kong|22.32|114.17;Dongguan|23.02|113.75;Hangzhou|30.27|120.15;Foshan|23.02|113.12;Shenyang|41.80|123.43;Riyadh|24.71|46.68;Baghdad|33.31|44.37;Santiago|-33.45|-70.67;Surat|21.17|72.83;Madrid|40.42|-3.70;Suzhou|31.30|120.58;Pune|18.52|73.86;Harbin|45.80|126.53;Houston|29.76|-95.37;Dallas|32.78|-96.80;Toronto|43.65|-79.38;Dar es Salaam|-6.79|39.28;Miami|25.76|-80.19;Belo Horizonte|-19.92|-43.94;Singapore|1.35|103.82;Philadelphia|39.95|-75.17;Atlanta|33.75|-84.39;Fukuoka|33.59|130.40;Khartoum|15.50|32.56;Barcelona|41.39|2.17;Johannesburg|-26.20|28.05;Saint Petersburg|59.93|30.32;Qingdao|36.07|120.38;Dalian|38.91|121.60;Washington|38.91|-77.04;Yangon|16.87|96.20;Alexandria|31.20|29.92;Jinan|36.65|117.12;Guadalajara|20.66|-103.35;Ankara|39.93|32.85;Melbourne|-37.81|144.96;Sydney|-33.87|151.21;Monterrey|25.69|-100.32;Nairobi|-1.29|36.82;Abidjan|5.36|-4.01;Casablanca|33.57|-7.59;Addis Ababa|9.03|38.74;Hanoi|21.03|105.85;Kabul|34.53|69.17;Rome|41.90|12.50;Berlin|52.52|13.41;Cape Town|-33.93|18.42;Montreal|45.50|-73.57;Phoenix|33.45|-112.07;Boston|42.36|-71.06;San Francisco|37.77|-122.42;Seattle|47.61|-122.33;Detroit|42.33|-83.05;Minneapolis|44.98|-93.27;San Diego|32.72|-117.16;Denver|39.74|-104.99;Vancouver|49.28|-123.12;Havana|23.11|-82.37;Santo Domingo|18.49|-69.93;Caracas|10.48|-66.90;Medellín|6.24|-75.58;Quito|-0.18|-78.47;Guayaquil|-2.19|-79.89;La Paz|-16.49|-68.12;Brasília|-15.79|-47.88;Salvador|-12.97|-38.51;Fortaleza|-3.72|-38.54;Recife|-8.05|-34.88;Curitiba|-25.43|-49.27;Porto Alegre|-30.03|-51.23;Montevideo|-34.90|-56.16;Córdoba|-31.42|-64.18;Rosario|-32.94|-60.64;Athens|37.98|23.73;Vienna|48.21|16.37;Warsaw|52.23|21.01;Budapest|47.50|19.04;Prague|50.08|14.44;Bucharest|44.43|26.10;Kyiv|50.45|30.52;Minsk|53.90|27.57;Milan|45.46|9.19;Hamburg|53.55|9.99;Munich|48.14|11.58;Brussels|50.85|4.35;Amsterdam|52.37|4.90;Stockholm|59.33|18.07;Copenhagen|55.68|12.57;Dublin|53.35|-6.26;Lisbon|38.72|-9.14;Birmingham|52.48|-1.90;Novosibirsk|55.03|82.92;Yekaterinburg|56.84|60.61;Kazan|55.80|49.11;Nizhny Novgorod|56.33|44.00;Samara|53.20|50.15;Omsk|54.99|73.37;Tashkent|41.30|69.24;Almaty|43.24|76.89;Baku|40.41|49.87;Tbilisi|41.72|44.79;Yerevan|40.18|44.51;Tel Aviv|32.09|34.78;Amman|31.95|35.93;Beirut|33.89|35.50;Damascus|33.51|36.29;Jeddah|21.49|39.19;Mecca|21.39|39.86;Dubai|25.20|55.27;Doha|25.29|51.53;Kuwait City|29.38|47.99;Muscat|23.59|58.38;Sanaa|15.37|44.19;Mashhad|36.30|59.61;Isfahan|32.65|51.67;Tabriz|38.08|46.29;Shiraz|29.59|52.58;Basra|30.51|47.81;Mosul|36.34|43.13;Izmir|38.42|27.14;Bursa|40.18|29.06;Adana|37.00|35.32;Faisalabad|31.42|73.08;Rawalpindi|33.60|73.05;Peshawar|34.01|71.58;Multan|30.20|71.45;Jaipur|26.91|75.79;Lucknow|26.85|80.95;Kanpur|26.45|80.33;Nagpur|21.15|79.09;Indore|22.72|75.86;Bhopal|23.26|77.41;Patna|25.59|85.14;Vadodara|22.31|73.19;Ludhiana|30.90|75.86;Agra|27.18|78.01;Nashik|20.00|73.79;Visakhapatnam|17.69|83.22;Coimbatore|11.02|76.96;Kochi|9.93|76.27;Chittagong|22.36|91.78;Colombo|6.93|79.86;Kathmandu|27.72|85.32;Mandalay|21.98|96.08;Phnom Penh|11.56|104.92;Surabaya|-7.26|112.75;Bandung|-6.92|107.61;Medan|3.59|98.67;Makassar|-5.15|119.43;Semarang|-6.97|110.42;Palembang|-2.99|104.76;Quezon City|14.68|121.04;Davao|7.19|125.46;Cebu City|10.32|123.89;Taipei|25.03|121.57;Kaohsiung|22.63|120.30;Taichung|24.15|120.67;Busan|35.18|129.08;Incheon|37.46|126.71;Daegu|35.87|128.60;Pyongyang|39.04|125.75;Sapporo|43.06|141.35;Kyoto|35.01|135.77;Kobe|34.69|135.20;Yokohama|35.44|139.64;Hiroshima|34.39|132.46;Sendai|38.27|140.87;Kawasaki|35.53|139.70;Ulaanbaatar|47.89|106.91;Changsha|28.23|112.94;Zhengzhou|34.75|113.63;Kunming|25.04|102.71;Xiamen|24.48|118.09;Ürümqi|43.83|87.62;Lanzhou|36.06|103.83;Taiyuan|37.87|112.56;Shijiazhuang|38.04|114.51;Changchun|43.82|125.32;Hefei|31.82|117.23;Nanning|22.82|108.37;Guiyang|26.65|106.63;Nanchang|28.68|115.86;Fuzhou|26.07|119.30;Ningbo|29.87|121.54;Wuxi|31.49|120.31;Wenzhou|28.00|120.70;Tangshan|39.63|118.18;Zibo|36.81|118.05;Hohhot|40.84|111.75;Algiers|36.75|3.06;Tunis|36.81|10.18;Tripoli|32.89|13.19;Rabat|34.02|-6.84;Fez|34.03|-5.00;Dakar|14.72|-17.47;Bamako|12.64|-8.00;Conakry|9.64|-13.58;Accra|5.60|-0.19;Kumasi|6.69|-1.62;Ibadan|7.38|3.95;Kano|12.00|8.52;Abuja|9.06|7.49;Port Harcourt|4.82|7.03;Douala|4.05|9.70;Yaoundé|3.87|11.52;Brazzaville|-4.26|15.24;Lubumbashi|-11.66|27.48;Kampala|0.35|32.58;Kigali|-1.94|30.06;Mogadishu|2.05|45.32;Antananarivo|-18.88|47.51;Maputo|-25.97|32.57;Lusaka|-15.39|28.32;Harare|-17.83|31.05;Durban|-29.86|31.02;Pretoria|-25.75|28.19;Ouagadougou|12.37|-1.52;Niamey|13.51|2.11;N'Djamena|12.13|15.06;Omdurman|15.64|32.48;Mombasa|-4.04|39.67;Perth|-31.95|115.86;Brisbane|-27.47|153.03;Adelaide|-34.93|138.60;Auckland|-36.85|174.76;Honolulu|21.31|-157.86;Las Vegas|36.17|-115.14;Portland|45.52|-122.68;Austin|30.27|-97.74;San Antonio|29.42|-98.49;Tampa|27.95|-82.46;Orlando|28.54|-81.38;Charlotte|35.23|-80.84;Baltimore|39.29|-76.61;St. Louis|38.63|-90.20;Cleveland|41.50|-81.69;Pittsburgh|40.44|-79.99;Cincinnati|39.10|-84.51;Kansas City|39.10|-94.58;Indianapolis|39.77|-86.16;Columbus|39.96|-83.00;Sacramento|38.58|-121.49;San Jose|37.34|-121.89;Salt Lake City|40.76|-111.89;Calgary|51.05|-114.07;Edmonton|53.55|-113.49;Ottawa|45.42|-75.70;Puebla|19.04|-98.21;Tijuana|32.51|-117.04;León|21.12|-101.68;Ciudad Juárez|31.69|-106.42;Guatemala City|14.63|-90.51;San Salvador|13.69|-89.19;Tegucigalpa|14.07|-87.19;Managua|12.13|-86.25;San Juan|18.47|-66.11;Port-au-Prince|18.54|-72.34;Cali|3.45|-76.53;Barranquilla|10.97|-74.80;Maracaibo|10.65|-71.64;Valencia|10.16|-68.00;Manaus|-3.12|-60.02;Belém|-1.46|-48.50;Goiânia|-16.69|-49.26;Campinas|-22.91|-47.06;Santa Cruz de la Sierra|-17.78|-63.18;Asunción|-25.26|-57.58;Kharkiv|49.99|36.23;Odesa|46.48|30.72;Dnipro|48.46|35.05;Belgrade|44.79|20.45;Sofia|42.70|23.32;Naples|40.85|14.27;Turin|45.07|7.69;Marseille|43.30|5.37;Lyon|45.76|4.84;Manchester|53.48|-2.24;Glasgow|55.86|-4.25;Cologne|50.94|6.96;Frankfurt|50.11|8.68;Rotterdam|51.92|4.48;Oslo|59.91|10.75;Helsinki|60.17|24.94;Kraków|50.06|19.94;Chelyabinsk|55.16|61.40;Krasnoyarsk|56.01|92.87;Ufa|54.74|55.97;Perm|58.01|56.23;Volgograd|48.71|44.51;Rostov-on-Don|47.24|39.71;Voronezh|51.66|39.20;Krasnodar|45.04|38.98;Astana|51.17|71.45;Bishkek|42.87|74.59;Dushanbe|38.56|68.79;Ashgabat|37.96|58.33;Karaj|35.84|50.94;Ahvaz|31.32|48.67;Qom|34.64|50.88;Erbil|36.19|44.01;Aleppo|36.20|37.16;Medina|24.47|39.61;Abu Dhabi|24.45|54.38;Sharjah|25.35|55.39;Gaziantep|37.07|37.38;Konya|37.87|32.49;Antalya|36.90|30.71;Jerusalem|31.77|35.22;Quetta|30.18|66.98;Gujranwala|32.16|74.19;Srinagar|34.08|74.80;Chandigarh|30.73|76.78;Jodhpur|26.24|73.02;Ranchi|23.34|85.31;Guwahati|26.14|91.74;Thiruvananthapuram|8.52|76.94;Madurai|9.93|78.12;Rajkot|22.30|70.80;Meerut|28.98|77.71;Varanasi|25.32|83.01;Amritsar|31.63|74.87;Prayagraj|25.44|81.85;Aurangabad|19.88|75.34;Khulna|22.85|89.56`;
+
+function haversine(a, b) {
+  const R = 6371, toR = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function buildCities() {
+  const cities = CITIES.split(';').map(s => { const [name, lat, lon] = s.split('|'); return { name, lat: +lat, lon: +lon }; });
+  const nodes = cities.map(c => ({ id: c.name }));
+  const edges = [];
+  for (const c of cities) {
+    const near = cities.filter(o => o !== c).map(o => ({ o, d: haversine(c, o) })).sort((x, y) => x.d - y.d).slice(0, 5);
+    for (const { o, d } of near) edges.push({ a: c.name, b: o.name, directed: true, label: `${fmtInt(Math.round(d))} km` });
+  }
+  return { nodes, edges };
+}
+
+function buildScrabble() { return buildLevenshteinGraph(SCRABBLE_WORDS.split(/\s+/).filter(Boolean)); }
+const PRESETS = { scrabble: buildScrabble, cities: buildCities };
+
+/* ---------------------------------------------------------------- seeded pastel palette */
+function hashString(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function mulberry32(seed) {
+  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+function pastelPalette(seedName, count) {
+  const rng = mulberry32(hashString(seedName));
+  const start = rng() * 360, out = [];
+  for (let i = 0; i < count; i++) {
+    const hue = (start + i * 137.508 + (rng() - 0.5) * 24) % 360;
+    const sat = 72 + rng() * 18, light = 78 + rng() * 8;
+    out.push(`hsl(${hue.toFixed(1)}, ${sat.toFixed(0)}%, ${light.toFixed(0)}%)`);
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------- text fitting */
+const BASE_FS = 14, MIN_FS = 9, PAD = 7;
+
+function fitNode(label, maxR, minR) {
+  const w = textWidth(label, BASE_FS);
+  const need = w / 2 + PAD;
+  if (need <= maxR) return { r: Math.max(minR, need), fs: BASE_FS, lines: [label], truncated: false };
+  const r = maxR;
+  for (let fs = BASE_FS; fs >= MIN_FS; fs--) {
+    const lines = wrapWords(label, fs, r);
+    if (lines) return { r, fs, lines, truncated: false };
+  }
+  const res = wrapTruncate(label, MIN_FS, r);
+  return { r, fs: MIN_FS, lines: res.lines, truncated: res.truncated };
+}
+function lineWidths(k, fs, r) {
+  const lh = fs * 1.18, out = [];
+  for (let i = 0; i < k; i++) {
+    const y = Math.abs((i - (k - 1) / 2) * lh) + fs * 0.55;
+    const half = Math.sqrt(Math.max(0, r * r - y * y));
+    out.push(Math.max(0, 2 * half - 4));
+  }
+  return out;
+}
+function wrapWords(label, fs, r) {
+  const lh = fs * 1.18;
+  const maxLines = Math.max(1, Math.floor((2 * r * 0.88) / lh));
+  const words = label.split(/\s+/);
+  for (let k = 1; k <= maxLines; k++) {
+    const widths = lineWidths(k, fs, r);
+    const lines = []; let cur = '', li = 0, ok = true;
+    for (const word of words) {
+      const test = cur ? cur + ' ' + word : word;
+      if (textWidth(test, fs) <= widths[li]) { cur = test; continue; }
+      if (!cur) { ok = false; break; }
+      lines.push(cur); li++;
+      if (li >= k || textWidth(word, fs) > widths[li]) { ok = false; break; }
+      cur = word;
+    }
+    if (ok) { lines.push(cur); return lines; }
+  }
+  return null;
+}
+function wrapTruncate(label, fs, r) {
+  const lh = fs * 1.18;
+  const k = Math.max(1, Math.floor((2 * r * 0.88) / lh));
+  const widths = lineWidths(k, fs, r);
+  const lines = []; let rest = label.trim();
+  for (let li = 0; li < k && rest; li++) {
+    const wmax = widths[li];
+    if (textWidth(rest, fs) <= wmax) { lines.push(rest); rest = ''; break; }
+    // find the longest prefix that fits
+    let lo = 1, hi = rest.length;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (textWidth(rest.slice(0, mid), fs) <= wmax) lo = mid; else hi = mid - 1; }
+    let cut = lo;
+    if (li < k - 1) {
+      const sp = rest.lastIndexOf(' ', cut);
+      if (sp > cut * 0.5) cut = sp;
+      lines.push(rest.slice(0, cut).trim()); rest = rest.slice(cut).trim();
+    } else {
+      let s = rest.slice(0, cut).trimEnd();
+      while (s.length > 0 && textWidth(s + '…', fs) > wmax) s = s.slice(0, -1).trimEnd();
+      lines.push(s + '…'); rest = '';
+      return { lines, truncated: true };
+    }
+  }
+  return { lines, truncated: rest.length > 0 };
+}
+function truncateToWidth(s, fs, wmax, weight = 400) {
+  if (textWidth(s, fs, weight) <= wmax) return { text: s, truncated: false };
+  let lo = 0, hi = s.length;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (textWidth(s.slice(0, mid).trimEnd() + '…', fs, weight) <= wmax) lo = mid; else hi = mid - 1; }
+  if (lo < 2) return { text: '', truncated: true };
+  return { text: s.slice(0, lo).trimEnd() + '…', truncated: true };
+}
+
+/* ---------------------------------------------------------------- layout */
+const EDGE_FS = 11.5, ARROW = 9, GAP = 8;
+function computeLayout(graph, centerId) {
+  const W = stage.clientWidth, H = stage.clientHeight;
+  const cx = W / 2, cy = H / 2;
+  const nbrs = graph.neighbors(centerId);
+  const n = nbrs.length;
+  let R = Math.max(90, Math.min(W, H) / 2 - 70);
+  let nbrMax = 44;
+  if (n > 1) nbrMax = Math.min(nbrMax, (Math.PI * R / n) * 0.82);
+  nbrMax = Math.max(nbrMax, 11);
+  R = Math.max(90, Math.min(W, H) / 2 - nbrMax - 26);
+  const nbrMin = Math.min(20, nbrMax);
+  const centerMax = Math.min(64, R * 0.42);
+  const nodes = new Map();
+  const fillOf = id => !app.scc ? null : app.view === 'scc' ? app.scc.colors[+id.slice(4)] : app.scc.colors[app.scc.of.get(id)];
+  const cf = fitNode(graph.labels.get(centerId), centerMax, Math.min(26, centerMax));
+  nodes.set(centerId, { id: centerId, x: cx, y: cy, r: cf.r, fit: cf, angle: 0, label: graph.labels.get(centerId), fill: fillOf(centerId) });
+  const edges = [];
+  nbrs.forEach((nb, i) => {
+    const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+    const fit = fitNode(nb.label, nbrMax, nbrMin);
+    nodes.set(nb.id, { id: nb.id, x: cx + R * Math.cos(angle), y: cy + R * Math.sin(angle), r: fit.r, fit, angle, label: nb.label, fill: fillOf(nb.id) });
+    edges.push({ u: centerId, v: nb.id, arrow: nb.arrow, name: nb.name, angle });
+  });
+  return { centerId, nodes, edges, cx, cy, R, n };
+}
+
+/* ---------------------------------------------------------------- rendering */
+const stage = document.getElementById('stage');
+const gEdges = stage.querySelector('.edges');
+const gLabels = stage.querySelector('.elabels');
+const gNodes = stage.querySelector('.nodes');
+const tip = document.getElementById('tip');
+
+function nodeMarkup(vn, designR, isCenter) {
+  const g = el('g', { class: 'node ' + (isCenter ? 'center' : 'nbr') + (vn.fill ? ' tinted' : ''), 'data-id': vn.id });
+  const inner = el('g', { class: 'inner' }, g);
+  const circle = el('circle', { r: designR }, inner);
+  if (vn.fill) circle.style.fill = vn.fill;
+  const fit = vn.fit;
+  const t = el('text', { 'text-anchor': 'middle', 'font-size': fit.fs }, inner);
+  const lh = fit.fs * 1.18, k = fit.lines.length;
+  fit.lines.forEach((ln, i) => {
+    const ts = el('tspan', { x: 0, y: ((i - (k - 1) / 2) * lh).toFixed(2), 'dominant-baseline': 'central' }, t);
+    ts.textContent = ln;
+  });
+  if (fit.truncated) g.setAttribute('data-tip', vn.label);
+  if (!isCenter) { g.setAttribute('tabindex', '0'); g.setAttribute('role', 'button'); g.setAttribute('aria-label', 'Go to ' + vn.label); }
+  return g;
+}
+function setNode(g, x, y, r, designR, opacity) {
+  g.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)})`);
+  g.firstChild.setAttribute('transform', `scale(${(r / designR).toFixed(4)})`);
+  g.style.opacity = opacity;
+}
+function setEdge(line, a, b, arrow, opacity) {
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+  const ux = dx / d, uy = dy / d;
+  const x1 = a.x + ux * a.r, y1 = a.y + uy * a.r;
+  const endR = b.r + (arrow ? ARROW : 0);
+  const x2 = b.x - ux * endR, y2 = b.y - uy * endR;
+  line.setAttribute('x1', x1.toFixed(2)); line.setAttribute('y1', y1.toFixed(2));
+  line.setAttribute('x2', x2.toFixed(2)); line.setAttribute('y2', y2.toFixed(2));
+  if (arrow) line.setAttribute('marker-end', 'url(#arrow)'); else line.removeAttribute('marker-end');
+  line.style.opacity = opacity;
+}
+
+function renderStatic(layout, fadeLabels) {
+  gEdges.innerHTML = ''; gLabels.innerHTML = ''; gNodes.innerHTML = '';
+  const c = layout.nodes.get(layout.centerId);
+  for (const e of layout.edges) {
+    const nb = layout.nodes.get(e.v);
+    const line = el('line', { class: 'edge' }, gEdges);
+    setEdge(line, c, nb, e.arrow, 1);
+    if (e.name) renderEdgeLabel(layout, e, c, nb, line);
+  }
+  for (const [id, vn] of layout.nodes) {
+    const g = nodeMarkup(vn, vn.r, id === layout.centerId);
+    setNode(g, vn.x, vn.y, vn.r, vn.r, 1);
+    gNodes.appendChild(g);
+  }
+  gLabels.classList.toggle('fade', !!fadeLabels && !reducedMotion);
+}
+
+function renderEdgeLabel(layout, e, c, nb, line) {
+  const dx = nb.x - c.x, dy = nb.y - c.y, dist = Math.hypot(dx, dy);
+  const start = c.r + GAP, end = dist - nb.r - (e.arrow ? ARROW : 0) - GAP;
+  // lateral clearance from the neighbouring spokes
+  let dmin = 0;
+  if (layout.n > 1) dmin = (EDGE_FS + 6) / (2 * Math.sin(Math.PI / layout.n));
+  const s = Math.max(start, dmin);
+  const avail = end - s;
+  const full = e.name;
+  let shown = { text: '', truncated: true };
+  if (avail > 8) shown = truncateToWidth(full, EDGE_FS, avail);
+  if (!shown.text) { line.setAttribute('data-tip', full); return; }
+  const mid = (s + end) / 2;
+  const mx = c.x + (dx / dist) * mid, my = c.y + (dy / dist) * mid;
+  let deg = Math.atan2(dy, dx) * 180 / Math.PI;
+  if (deg > 90 || deg < -90) deg += 180;
+  const t = el('text', { class: 'elabel', 'text-anchor': 'middle', dy: -4,
+    transform: `translate(${mx.toFixed(2)},${my.toFixed(2)}) rotate(${deg.toFixed(2)})` }, gLabels);
+  t.textContent = shown.text;
+  if (shown.truncated) { t.setAttribute('data-tip', full); line.setAttribute('data-tip', full); }
+}
+
+/* ---------------------------------------------------------------- animation */
+let animating = false;
+function animateTo(graph, oldLayout, newId, done) {
+  const newLayout = computeLayout(graph, newId);
+  if (reducedMotion) { renderStatic(newLayout, false); done(newLayout); return; }
+  animating = true;
+  gLabels.innerHTML = ''; gEdges.innerHTML = ''; gNodes.innerHTML = '';
+  const oldC = oldLayout.nodes.get(oldLayout.centerId);
+  const newInOld = oldLayout.nodes.get(newId);
+  const ids = new Set([...oldLayout.nodes.keys(), ...newLayout.nodes.keys()]);
+  const vis = [];
+  for (const id of ids) {
+    const o = oldLayout.nodes.get(id), nn = newLayout.nodes.get(id);
+    let from, to;
+    if (o) from = { x: o.x, y: o.y, r: o.r, op: 1 };
+    else {
+      from = { x: newLayout.cx + Math.cos(nn.angle) * (newLayout.R + 140), y: newLayout.cy + Math.sin(nn.angle) * (newLayout.R + 140), r: nn.r * 0.6, op: 0 };
+    }
+    if (nn) to = { x: nn.x, y: nn.y, r: nn.r, op: 1 };
+    else {
+      let ux, uy;
+      if (id === oldLayout.centerId && newInOld) { const dx = o.x - newInOld.x, dy = o.y - newInOld.y, d = Math.hypot(dx, dy) || 1; ux = dx / d; uy = dy / d; }
+      else if (id === oldLayout.centerId) { ux = 0; uy = -1; }
+      else { ux = Math.cos(o.angle); uy = Math.sin(o.angle); }
+      to = { x: o.x + ux * 160, y: o.y + uy * 160, r: o.r * 0.6, op: 0 };
+    }
+    const design = nn || o;
+    const g = nodeMarkup(design, design.r, id === newId);
+    gNodes.appendChild(g);
+    vis.push({ id, g, from, to, designR: design.r, cur: { ...from } });
+  }
+  const byId = new Map(vis.map(v => [v.id, v]));
+  const edgeMap = new Map();
+  const key = (u, v) => u < v ? u + '\u0000' + v : v + '\u0000' + u;
+  for (const e of oldLayout.edges) edgeMap.set(key(e.u, e.v), { u: e.u, v: e.v, arrow: e.arrow, from: 1, to: 0 });
+  for (const e of newLayout.edges) {
+    const k = key(e.u, e.v), ex = edgeMap.get(k);
+    if (ex) { ex.to = 1; ex.u = e.u; ex.v = e.v; ex.arrow = e.arrow; }
+    else edgeMap.set(k, { u: e.u, v: e.v, arrow: e.arrow, from: 0, to: 1 });
+  }
+  const edges = [...edgeMap.values()].map(e => ({ ...e, line: el('line', { class: 'edge' }, gEdges) }));
+
+  const DUR = 520, t0 = performance.now();
+  const frame = now => {
+    const t = easeInOut(Math.min(1, (now - t0) / DUR));
+    for (const v of vis) {
+      v.cur.x = lerp(v.from.x, v.to.x, t); v.cur.y = lerp(v.from.y, v.to.y, t);
+      v.cur.r = lerp(v.from.r, v.to.r, t); v.cur.op = lerp(v.from.op, v.to.op, t);
+      setNode(v.g, v.cur.x, v.cur.y, v.cur.r, v.designR, v.cur.op);
+    }
+    for (const e of edges) setEdge(e.line, byId.get(e.u).cur, byId.get(e.v).cur, e.arrow, lerp(e.from, e.to, t));
+    if (t < 1) requestAnimationFrame(frame);
+    else { animating = false; renderStatic(newLayout, true); done(newLayout); }
+  };
+  requestAnimationFrame(frame);
+}
+
+/* ---------------------------------------------------------------- app state */
+const app = { graph: null, compIndex: 0, layout: null, datasetName: '', scc: null, view: 'nodes', lastNodeId: null };
+const activeGraph = () => app.view === 'scc' ? app.graph.condensation(app.compIndex) : app.graph;
+const $ = id => document.getElementById(id);
+const dsSel = $('dataset'), compSel = $('component'), sccSel = $('scc'), condBtn = $('condense'), fileIn = $('file'), status = $('status'), empty = $('empty');
+
+function showEmpty(msg) { empty.textContent = msg || ''; empty.hidden = !msg; }
+
+function loadDataset(data, name) {
+  const graph = new Graph(data.nodes, data.edges);
+  app.graph = graph; app.datasetName = name;
+  compSel.innerHTML = '';
+  if (graph.components.length > 1) {
+    graph.components.forEach((c, i) => {
+      const o = document.createElement('option');
+      o.value = i; o.textContent = `Subgraph ${i + 1} (${fmtInt(c.length)} node${c.length === 1 ? '' : 's'})`;
+      compSel.appendChild(o);
+    });
+    compSel.hidden = false;
+  } else compSel.hidden = true;
+  selectComponent(0);
+}
+function selectComponent(i) {
+  if (game.active || !modal.hidden) endGame();
+  app.compIndex = i; compSel.value = String(i);
+  setupSCC();
+  pickRandom();
+}
+function setupSCC() {
+  const info = app.graph.sccs(app.compIndex);
+  sccSel.innerHTML = ''; sccSel.style.background = '';
+  app.view = 'nodes'; app.lastNodeId = null; condBtn.setAttribute('aria-pressed', 'false'); condBtn.textContent = 'Show condensation';
+  if (!info || info.list.length < 2) { app.scc = null; sccSel.hidden = true; condBtn.hidden = true; return; }
+  const seedName = compSel.hidden ? app.datasetName : `${app.datasetName} / ${compSel.options[app.compIndex].textContent}`;
+  const colors = pastelPalette(seedName, info.list.length);
+  app.scc = { list: info.list, of: info.of, colors };
+  info.list.forEach((c, i) => {
+    const o = document.createElement('option');
+    o.value = i;
+    o.textContent = `${c.kind} SCC ${i + 1} (${fmtInt(c.ids.length)} node${c.ids.length === 1 ? '' : 's'})`;
+    o.style.background = colors[i];
+    sccSel.appendChild(o);
+  });
+  sccSel.hidden = false; condBtn.hidden = false;
+}
+function currentSCCIndex() {
+  return app.view === 'scc' ? +app.layout.centerId.slice(4) : app.scc.of.get(app.layout.centerId);
+}
+function syncSCC() {
+  if (!app.scc || !app.layout) return;
+  const i = currentSCCIndex();
+  if (app.view === 'nodes') app.lastNodeId = app.layout.centerId;
+  sccSel.value = String(i);
+  sccSel.style.background = app.scc.colors[i];
+}
+function randomOf(list) { return list[Math.floor(Math.random() * list.length)]; }
+function pickRandom() {
+  const comp = app.view === 'scc' ? [...activeGraph().labels.keys()] : app.graph.components[app.compIndex];
+  if (!comp || !comp.length) { showEmpty('This graph has no nodes.'); return; }
+  showRandom(randomOf(comp));
+}
+function showRandom(id) {
+  showEmpty('');
+  app.layout = computeLayout(activeGraph(), id);
+  renderStatic(app.layout, true);
+  updateStatus(); syncSCC();
+}
+function toggleView() {
+  if (!app.scc || animating) return;
+  const i = currentSCCIndex();
+  if (app.view === 'nodes') {
+    app.view = 'scc';
+    condBtn.setAttribute('aria-pressed', 'true'); condBtn.textContent = 'Show nodes';
+    showRandom('scc:' + i);
+  } else {
+    app.view = 'nodes';
+    condBtn.setAttribute('aria-pressed', 'false'); condBtn.textContent = 'Show condensation';
+    const ids = app.scc.list[i].ids;
+    showRandom(app.lastNodeId && app.scc.of.get(app.lastNodeId) === i ? app.lastNodeId : randomOf(ids));
+  }
+}
+function updateStatus() {
+  const g = app.graph, comp = g.components[app.compIndex];
+  const parts = [`<b>${app.datasetName}</b>`, `${fmtInt(g.labels.size)} nodes, ${fmtInt(g.edgeCount)} edges`];
+  if (g.components.length > 1) parts.push(`subgraph ${app.compIndex + 1} of ${g.components.length} shown (${fmtInt(comp.length)} nodes)`);
+  if (app.scc) parts.push(`${app.scc.list.length} strongly connected components${app.view === 'scc' ? ', condensation view' : ''}`);
+  if (app.layout) parts.push(`${app.layout.n} connection${app.layout.n === 1 ? '' : 's'} from <b>${escapeHtml(app.layout.nodes.get(app.layout.centerId).label)}</b>`);
+  status.innerHTML = parts.map(p => `<span>${p}</span>`).join('');
+}
+function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function goTo(id) {
+  if (animating || !app.graph || id === app.layout.centerId) return;
+  animateTo(activeGraph(), app.layout, id, layout => { app.layout = layout; updateStatus(); syncSCC(); checkGame(); });
+}
+
+/* ---------------------------------------------------------------- serializers */
+// Reconstruct a flat edge list from the graph model (undirected edges emitted once).
+function graphToData(graph) {
+  const nodes = [...graph.labels].map(([id, label]) => ({ id, label }));
+  const edges = [];
+  for (const [a, m] of graph.out) for (const [b, e] of m) {
+    if (e.dirOnly) edges.push({ a, b, directed: true, label: e.label });
+    else if (a < b) edges.push({ a, b, directed: false, label: e.label });
+  }
+  return { nodes, edges };
+}
+const needsQuote = s => /[\s,;"'#]|->|--/.test(s) || s === '';
+const q = s => needsQuote(s) ? '"' + s.replace(/"/g, "'") + '"' : s;
+function toEdgeList(graph) {
+  const { nodes, edges } = graphToData(graph);
+  const linked = new Set(); edges.forEach(e => { linked.add(e.a); linked.add(e.b); });
+  const lines = ['# One edge per line: A -- B (undirected) or A -> B (directed), optional quoted label.'];
+  for (const e of edges) lines.push(`${q(graph.labels.get(e.a))} ${e.directed ? '->' : '--'} ${q(graph.labels.get(e.b))}${e.label ? ' "' + e.label.replace(/"/g, "'") + '"' : ''}`);
+  for (const n of nodes) if (!linked.has(n.id)) lines.push(q(n.label));
+  return lines.join('\n') + '\n';
+}
+function toJSON(graph) {
+  const { nodes, edges } = graphToData(graph);
+  return JSON.stringify({
+    nodes: nodes.map(n => n.id === n.label ? { id: n.id } : { id: n.id, label: n.label }),
+    edges: edges.map(e => { const o = { source: e.a, target: e.b, directed: e.directed }; if (e.label) o.label = e.label; return o; })
+  }, null, 1);
+}
+function toDOT(graph, name) {
+  const { nodes, edges } = graphToData(graph);
+  const anyDirected = edges.some(e => e.directed), allDirected = edges.every(e => e.directed);
+  const dq = s => '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  const out = [`${anyDirected ? 'digraph' : 'graph'} ${dq(name || 'G')} {`];
+  for (const n of nodes) if (n.id !== n.label) out.push(`  ${dq(n.id)} [label=${dq(n.label)}];`);
+  const linked = new Set(); edges.forEach(e => { linked.add(e.a); linked.add(e.b); });
+  for (const n of nodes) if (!linked.has(n.id) && n.id === n.label) out.push(`  ${dq(n.id)};`);
+  for (const e of edges) {
+    const attrs = [];
+    if (e.label) attrs.push(`label=${dq(e.label)}`);
+    if (anyDirected && !allDirected && !e.directed) attrs.push('dir=none');
+    out.push(`  ${dq(e.a)} ${anyDirected ? '->' : '--'} ${dq(e.b)}${attrs.length ? ' [' + attrs.join(', ') + ']' : ''};`);
+  }
+  out.push('}');
+  return out.join('\n') + '\n';
+}
+
+/* ---------------------------------------------------------------- edit & export */
+const editor = $('editor'), editorText = $('editortext'), editorErr = $('editorerr');
+let editorMode = 'edit';
+function openEditor(mode) {
+  if (!app.graph) return;
+  editorMode = mode;
+  editorErr.textContent = '';
+  const fmt = $('exportfmt').value;
+  if (mode === 'edit') {
+    $('editortitle').textContent = `Edit dataset: ${app.datasetName}`;
+    editorText.value = toEdgeList(app.graph);
+    editorText.readOnly = false;
+    $('editorhint').textContent = 'Edit the text below and apply it to rebuild the graph. Any import format works here (edge list, DOT, GraphML, JSON).';
+    $('editorok').textContent = 'Apply changes';
+    $('exportfmtwrap').hidden = true;
+  } else {
+    $('editortitle').textContent = `Export dataset: ${app.datasetName}`;
+    editorText.value = fmt === 'json' ? toJSON(app.graph) : fmt === 'dot' ? toDOT(app.graph, app.datasetName) : toEdgeList(app.graph);
+    editorText.readOnly = true;
+    $('editorhint').textContent = `${fmtInt(app.graph.labels.size)} nodes and ${fmtInt(app.graph.edgeCount)} edges. Preview below; download saves it as a file.`;
+    $('editorok').textContent = 'Download';
+    $('exportfmtwrap').hidden = false;
+  }
+  editor.hidden = false;
+  editorText.focus();
+}
+function closeEditor() { editor.hidden = true; }
+function safeFileName(name) { return (name || 'graph').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'graph'; }
+function downloadText(text, filename, type) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+}
+function applyEdit() {
+  let data;
+  try { data = parseGraphText(editorText.value); }
+  catch (err) { editorErr.textContent = err.message; return; }
+  const base = app.datasetName.replace(/ \(edited\)$/, '');
+  const name = base + ' (edited)';
+  let opt = dsSel.querySelector('option[value="__edited"]');
+  if (!opt) { opt = document.createElement('option'); opt.value = '__edited'; dsSel.insertBefore(opt, dsSel.options[1]); }
+  opt.textContent = name;
+  PRESETS.__edited = () => data;
+  dsSel.value = '__edited'; lastDataset = '__edited';
+  closeEditor();
+  loadDataset(data, name);
+}
+$('editbtn').addEventListener('click', () => guardGame(() => openEditor('edit')));
+$('exportbtn').addEventListener('click', () => openEditor('export'));
+$('exportfmt').addEventListener('change', () => { if (!editor.hidden && editorMode === 'export') openEditor('export'); });
+$('editorcancel').addEventListener('click', closeEditor);
+$('editorok').addEventListener('click', () => {
+  if (editorMode === 'edit') { applyEdit(); return; }
+  const fmt = $('exportfmt').value;
+  const ext = fmt === 'json' ? 'json' : fmt === 'dot' ? 'gv' : 'txt';
+  const type = fmt === 'json' ? 'application/json' : 'text/plain';
+  downloadText(editorText.value, `${safeFileName(app.datasetName)}.${ext}`, type);
+});
+editor.addEventListener('click', e => { if (e.target === editor) closeEditor(); });
+
+/* ---------------------------------------------------------------- mini games */
+const game = { active: false, destId: null, minSteps: 0, steps: 0 };
+const gamePanel = $('gamepanel'), gameMenu = $('gamemenu'), modal = $('modal');
+
+// breadth-first distances from start over outgoing edges; stops early when `until` is reached
+function bfsDistances(graph, start, until) {
+  const dist = new Map([[start, 0]]);
+  const q = [start]; let head = 0;
+  while (head < q.length) {
+    const v = q[head++];
+    if (v === until) break;
+    const d = dist.get(v) + 1;
+    for (const w of graph.out.get(v).keys()) if (!dist.has(w)) { dist.set(w, d); q.push(w); }
+  }
+  return dist;
+}
+function chooseDestination(graph, start) {
+  const dist = bfsDistances(graph, start);
+  const reachable = [...dist.keys()].filter(id => id !== start);
+  if (!reachable.length) return null;
+  // sample a few reachable nodes (more for bigger pools, 2..5) and keep the farthest one
+  const pool = reachable.slice();
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  const samples = Math.min(5, Math.ceil(pool.length / 100) + 1);
+  let best = null;
+  for (const id of pool.slice(0, samples)) if (!best || dist.get(id) > dist.get(best)) best = id;
+  return { id: best, minSteps: dist.get(best) };
+}
+function startGame() {
+  const graph = activeGraph();
+  let pick = chooseDestination(graph, app.layout.centerId);
+  if (!pick) {
+    // nowhere to go from here: move to a node that has somewhere to go
+    const candidates = [...graph.labels.keys()].filter(id => graph.out.get(id).size > 0 && (app.view === 'scc' || app.graph.components[app.compIndex].includes(id)));
+    if (!candidates.length) { showEmpty('Nothing is reachable in this graph, so there is no destination to find.'); setTimeout(() => showEmpty(''), 2500); return; }
+    showRandom(randomOf(candidates));
+    pick = chooseDestination(graph, app.layout.centerId);
+  }
+  Object.assign(game, { active: true, destId: pick.id, minSteps: pick.minSteps, steps: 0 });
+  $('gamedest').textContent = graph.labels.get(pick.id);
+  $('gamesteps').textContent = '0';
+  gamePanel.hidden = false; gameMenu.hidden = true; $('playbtn').setAttribute('aria-expanded', 'false');
+}
+function endGame() {
+  game.active = false; gamePanel.hidden = true; modal.hidden = true;
+}
+function showModal(title, bodyHtml, primaryLabel, onPrimary, secondaryLabel = 'Stop Playing', onSecondary = endGame) {
+  $('modaltitle').textContent = title;
+  $('modalbody').innerHTML = bodyHtml;
+  $('modalagain').textContent = primaryLabel;
+  $('modalagain').onclick = () => { modal.hidden = true; onPrimary(); };
+  $('modalstop').textContent = secondaryLabel;
+  $('modalstop').onclick = () => { modal.hidden = true; onSecondary(); };
+  modal.hidden = false;
+  $('modalagain').focus();
+}
+function resultBody(score) {
+  return `<div class="score">${score}%</div><p>Minimum steps: <b>${game.minSteps}</b> &nbsp; Steps taken: <b>${game.steps}</b></p>`;
+}
+function restartFromRandom() {
+  const graph = activeGraph();
+  const pool = app.view === 'scc' ? [...graph.labels.keys()] : app.graph.components[app.compIndex];
+  showRandom(randomOf(pool));
+  startGame();
+}
+function giveUp() {
+  game.active = false;
+  showModal('Gave Up :(', resultBody(0), 'Try Again', restartFromRandom);
+}
+// Runs `action` immediately, or asks to stop the game first. `revert` undoes a select change on "No".
+function guardGame(action, revert) {
+  if (!game.active) { action(); return; }
+  showModal('Stop Playing?', '<p>The game has to be stopped to use this control. Stop playing now?</p>',
+    'Yes, Stop', () => { endGame(); action(); },
+    'No, Continue', () => { if (revert) revert(); });
+}
+function checkGame() {
+  if (!game.active) return;
+  const graph = activeGraph(), here = app.layout.centerId;
+  game.steps++;
+  $('gamesteps').textContent = String(game.steps);
+  if (here === game.destId) {
+    const score = Math.round((game.minSteps / game.steps) * 100);
+    showModal('Yay, Game Won!', resultBody(score), 'Play Again', () => { game.active = false; startGame(); });
+    game.active = false;
+    return;
+  }
+  const dist = bfsDistances(graph, here, game.destId);
+  if (!dist.has(game.destId)) {
+    showModal('Oooops, Game Lost',
+      `<p>The destination <b>${escapeHtml(graph.labels.get(game.destId))}</b> can no longer be reached from <b>${escapeHtml(graph.labels.get(here))}</b> — every path forward leads away from it.</p>`,
+      'Try Again', () => { game.active = false; startGame(); });
+    game.active = false;
+  }
+}
+$('playbtn').addEventListener('click', () => guardGame(() => {
+  gameMenu.hidden = !gameMenu.hidden; $('playbtn').setAttribute('aria-expanded', String(!gameMenu.hidden));
+}));
+gameMenu.addEventListener('click', e => { const b = e.target.closest('[data-game]'); if (b && b.dataset.game === 'destination') startGame(); });
+$('giveup').addEventListener('click', giveUp);
+document.addEventListener('click', e => { if (!gameMenu.hidden && !e.target.closest('#gamemenu, #playbtn')) { gameMenu.hidden = true; $('playbtn').setAttribute('aria-expanded', 'false'); } });
+
+/* ---------------------------------------------------------------- events */
+gNodes.addEventListener('click', e => {
+  const g = e.target.closest('.node.nbr'); if (g) goTo(g.dataset.id);
+});
+gNodes.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const g = e.target.closest('.node.nbr'); if (g) { e.preventDefault(); goTo(g.dataset.id); }
+});
+
+// tooltip
+stage.addEventListener('pointerover', e => {
+  const t = e.target.closest('[data-tip]'); if (!t) return;
+  tip.textContent = t.dataset.tip; tip.classList.add('on'); moveTip(e);
+});
+stage.addEventListener('pointermove', e => { if (tip.classList.contains('on')) moveTip(e); });
+stage.addEventListener('pointerout', e => { if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('[data-tip]')) tip.classList.remove('on'); });
+function moveTip(e) {
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + w > innerWidth - 8) x = e.clientX - w - pad;
+  if (y + h > innerHeight - 8) y = e.clientY - h - pad;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+}
+
+let lastDataset = 'scrabble';
+dsSel.addEventListener('change', () => guardGame(() => {
+  const v = dsSel.value;
+  if (v === '__import') { fileIn.value = ''; fileIn.click(); dsSel.value = lastDataset; return; }
+  if (v === '__wordlist') { $('wordfile').value = ''; $('wordfile').click(); dsSel.value = lastDataset; return; }
+  lastDataset = v;
+  loadDataset(PRESETS[v](), dsSel.options[dsSel.selectedIndex].textContent);
+}, () => { dsSel.value = lastDataset; }));
+fileIn.addEventListener('change', () => {
+  const f = fileIn.files[0]; if (!f) return;
+  f.text().then(text => {
+    try {
+      const data = parseGraphText(text);
+      // add an "imported" option (or reuse it)
+      let opt = dsSel.querySelector('option[value="__imported"]');
+      if (!opt) { opt = document.createElement('option'); opt.value = '__imported'; dsSel.insertBefore(opt, dsSel.options[1]); }
+      opt.textContent = f.name;
+      dsSel.value = '__imported'; lastDataset = '__imported';
+      PRESETS.__imported = () => data;
+      loadDataset(data, f.name);
+    } catch (err) {
+      showEmpty(`Couldn't read ${f.name}: ${err.message}`);
+    }
+  });
+});
+$('wordfile').addEventListener('change', () => {
+  const f = $('wordfile').files[0]; if (!f) return;
+  f.text().then(text => {
+    // one word per line; tolerate "word 12345" frequency columns and 12dicts-style trailing markers (word%, word+)
+    const all = text.split(/\r?\n/).map(w => w.trim().toLowerCase().split(/[\s,;\t]+/)[0].replace(/[^a-z]+$/, '')).filter(w => /^[a-z]+$/.test(w));
+    if (!all.length) { showEmpty(`No words found in ${f.name}. Expected one word per line.`); setTimeout(() => showEmpty(''), 3000); return; }
+    const longest = Math.max(...all.map(w => w.length));
+    let maxLen = 4;
+    if (longest > 4) {
+      const ans = prompt(`${fmtInt(all.length)} words found (longest is ${longest} letters). Keep words up to how many letters? Larger limits make a much bigger graph.`, '4');
+      if (ans === null) return;
+      maxLen = Math.max(2, parseInt(ans, 10) || 4);
+    }
+    const words = all.filter(w => w.length <= maxLen);
+    if (words.length > 40000 && !confirm(`${fmtInt(words.length)} words will take a while to link. Continue?`)) return;
+    const data = buildLevenshteinGraph(words);
+    const name = `${f.name} (≤${maxLen} letters, Levenshtein 1)`;
+    let opt = dsSel.querySelector('option[value="__imported"]');
+    if (!opt) { opt = document.createElement('option'); opt.value = '__imported'; dsSel.insertBefore(opt, dsSel.options[2]); }
+    opt.textContent = name;
+    dsSel.value = '__imported'; lastDataset = '__imported';
+    PRESETS.__imported = () => data;
+    loadDataset(data, name);
+  });
+});
+compSel.addEventListener('change', () => guardGame(() => selectComponent(+compSel.value), () => { compSel.value = String(app.compIndex); }));
+sccSel.addEventListener('change', () => guardGame(() => {
+  if (!app.scc || animating) { syncSCC(); return; }
+  const target = app.scc.list[+sccSel.value];
+  sccSel.style.background = app.scc.colors[target.index];
+  if (app.view === 'scc') { goTo('scc:' + target.index); return; }
+  const pool = target.ids.length > 1 ? target.ids.filter(id => id !== app.layout.centerId) : target.ids;
+  goTo(randomOf(pool));
+}, syncSCC));
+condBtn.addEventListener('click', () => guardGame(toggleView));
+$('random').addEventListener('click', () => guardGame(() => { if (app.graph && !animating) pickRandom(); }));
+$('helpbtn').addEventListener('click', () => {
+  const h = $('help'); h.hidden = !h.hidden; $('helpbtn').setAttribute('aria-expanded', String(!h.hidden));
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('help').hidden = true; gameMenu.hidden = true; closeEditor(); } });
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (!app.graph || animating) return;
+    app.layout = computeLayout(activeGraph(), app.layout.centerId);
+    renderStatic(app.layout, false);
+  }, 80);
+});
+
+/* ---------------------------------------------------------------- start */
+const start = () => loadDataset(PRESETS.scrabble(), 'Short Scrabble Words');
+if (document.fonts && document.fonts.load) {
+  Promise.race([document.fonts.load('500 14px "IBM Plex Sans"'), new Promise(r => setTimeout(r, 1500))]).then(start, start);
+} else start();
+})();
+</script>
+</body>
+</html>
