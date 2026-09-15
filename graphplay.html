@@ -15,6 +15,7 @@
     --rule: #D7DDE2;
     --accent: #3D6BE5;
     --accent-soft: #EAF0FF;
+    --hi-opacity: 0.5;   /* opacity of hover highlights: hub edge, curved links, outward hairs */
     --font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
   }
   * { box-sizing: border-box; }
@@ -93,6 +94,7 @@
   .modal-actions .spacer { flex: 1; }
   #help {
     position: fixed; right: 18px; bottom: 96px; width: min(360px, calc(100vw - 36px));
+    max-height: calc(100vh - 96px - 18px); overflow-y: auto; overscroll-behavior: contain;
     background: #fff; border: 1px solid var(--rule); border-radius: 8px;
     padding: 14px 16px; font-size: 13px; line-height: 1.5; color: var(--ink);
     box-shadow: 0 8px 24px rgba(34,48,60,0.10);
@@ -118,7 +120,9 @@
   #tip.on { opacity: 1; }
 
   /* graph elements */
-  .edge { stroke: var(--line); stroke-width: 1.4; fill: none; }
+  .edge { stroke: var(--line); stroke-width: 1.4; fill: none; transition: stroke 120ms; }
+  .edge.hi { stroke: var(--accent); stroke-width: 1.5; }
+  .hair.hi { opacity: var(--hi-opacity); }
   .elabel {
     font-size: 11.5px; fill: var(--muted); paint-order: stroke; stroke: var(--bg); stroke-width: 4px;
     stroke-linejoin: round; user-select: none;
@@ -135,9 +139,11 @@
   .node.center.tinted text { fill: var(--ink); }
   #scc { border-width: 1px; }
   #condense[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
-  .elabels.fade { animation: fadein 260ms ease-out both; }
+  .hair { stroke-width: 1.2; fill: none; stroke-linecap: round; }
+  .link { stroke: var(--accent); stroke-width: 1.5; fill: none; stroke-linecap: round; opacity: var(--hi-opacity); pointer-events: none; }
+  .elabels.fade, .hairs.fade { animation: fadein 260ms ease-out both; }
   @keyframes fadein { from { opacity: 0 } to { opacity: 1 } }
-  @media (prefers-reduced-motion: reduce) { .elabels.fade { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .elabels.fade, .hairs.fade { animation: none; } }
 </style>
 </head>
 <body>
@@ -146,8 +152,14 @@
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
       <path d="M1,1 L9,5 L1,9" fill="none" stroke="#B9C2CA" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
+    <marker id="arrow-hi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="#3D6BE5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
   </defs>
+  <defs class="hairdefs"></defs>
+  <g class="hairs"></g>
   <g class="edges"></g>
+  <g class="links"></g>
   <g class="elabels"></g>
   <g class="nodes"></g>
 </svg>
@@ -716,12 +728,15 @@ function computeLayout(graph, centerId) {
     nodes.set(nb.id, { id: nb.id, x: cx + R * Math.cos(angle), y: cy + R * Math.sin(angle), r: fit.r, fit, angle, label: nb.label, fill: fillOf(nb.id) });
     edges.push({ u: centerId, v: nb.id, arrow: nb.arrow, name: nb.name, angle });
   });
-  return { centerId, nodes, edges, cx, cy, R, n };
+  return { centerId, nodes, edges, cx, cy, R, n, graph };
 }
 
 /* ---------------------------------------------------------------- rendering */
 const stage = document.getElementById('stage');
 const gEdges = stage.querySelector('.edges');
+const gHairs = stage.querySelector('.hairs');
+const gLinks = stage.querySelector('.links');
+const hairDefs = stage.querySelector('.hairdefs');
 const gLabels = stage.querySelector('.elabels');
 const gNodes = stage.querySelector('.nodes');
 const tip = document.getElementById('tip');
@@ -764,7 +779,7 @@ function renderStatic(layout, fadeLabels) {
   const c = layout.nodes.get(layout.centerId);
   for (const e of layout.edges) {
     const nb = layout.nodes.get(e.v);
-    const line = el('line', { class: 'edge' }, gEdges);
+    const line = el('line', { class: 'edge', 'data-to': e.v }, gEdges);
     setEdge(line, c, nb, e.arrow, 1);
     if (e.name) renderEdgeLabel(layout, e, c, nb, line);
   }
@@ -773,7 +788,184 @@ function renderStatic(layout, fadeLabels) {
     setNode(g, vn.x, vn.y, vn.r, vn.r, 1);
     gNodes.appendChild(g);
   }
+  renderHairs(layout);
   gLabels.classList.toggle('fade', !!fadeLabels && !reducedMotion);
+  gHairs.classList.toggle('fade', !!fadeLabels && !reducedMotion);
+}
+
+/* "Hairy" spoke nodes: faint lines radiating from each spoke, one per neighbour other than the hub,
+   evenly spaced and purely geometric. Visible length is at most the node's radius, and adjacent
+   spokes shorten their hairs so that (r1 + h1) + (r2 + h2) never exceeds the distance between
+   their centres, i.e. the hair envelopes may touch but never overlap. */
+function hairLengths(spokes) {
+  const hs = spokes.map(sp => sp.r);
+  const n = spokes.length;
+  if (n < 2) return hs;
+  const pairs = n === 2 ? [[0, 1]] : spokes.map((_, i) => [i, (i + 1) % n]);
+  for (const [i, j] of pairs) {
+    const a = spokes[i], b = spokes[j];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    let excess = (a.r + hs[i] + b.r + hs[j]) - d;
+    if (excess <= 0) continue;
+    const big = hs[i] >= hs[j] ? i : j, small = big === i ? j : i;
+    const diff = hs[big] - hs[small];
+    if (diff >= excess) { hs[big] -= excess; continue; }
+    hs[big] -= diff; excess -= diff;                 // now equal
+    const nh = Math.max(0, hs[big] - excess / 2);    // shrink both by the same proportion
+    hs[big] = nh; hs[small] = nh;
+  }
+  return hs;
+}
+function renderHairs(layout) {
+  gHairs.innerHTML = ''; hairDefs.innerHTML = ''; gLinks.innerHTML = '';
+  layout.hairs = new Map();
+  if (!layout.graph) return;
+  const spokes = layout.edges.map(e => layout.nodes.get(e.v));
+  const hs = hairLengths(spokes);
+  const TAU = 2 * Math.PI;
+  spokes.forEach((sp, i) => {
+    const h = hs[i];
+    if (h < 2) return;
+    // Hairs are bunched by where the neighbour is: off-screen neighbours fan outward (away from
+    // the hub); neighbours that are on-screen spokes fan inward on the side of the hub edge they
+    // sit on (facing the hub, clockwise-closer spokes are on the left, counter-clockwise on the
+    // right; a spoke exactly opposite goes left). The hub itself is the real edge and gets no hair.
+    // Within a sector, hairs are ordered by ring distance so each one points roughly at its spoke.
+    const toHub = sp.angle + Math.PI;
+    const left = [], right = []; let out = 0;
+    for (const nb of layout.graph.neighbors(sp.id)) {
+      if (nb.id === layout.centerId) continue;
+      const t = layout.nodes.get(nb.id);
+      if (!t) { out++; continue; }
+      const delta = ((t.angle - sp.angle) % TAU + TAU) % TAU;     // clockwise ring distance (y-down coords)
+      (delta <= Math.PI + 1e-9 ? left : right).push({ id: nb.id, delta });
+    }
+    left.sort((x, y) => x.delta - y.delta); right.sort((x, y) => x.delta - y.delta);
+    const m = left.length + right.length + out;
+    if (!m) return;
+    const hairs = [];
+    const fan = (from, span, items) => items.forEach((it, j) => hairs.push({ angle: from + (span * (j + 1)) / (items.length + 1), target: it ? it.id : null }));
+    const deg = d => d * Math.PI / 180;
+    // inward zones run from 30° to 60° either side of the hub edge; the outward zone is 150° wide,
+    // centred on the direction away from the hub
+    fan(toHub - deg(60), deg(30), left);                            // left of the hub edge, facing the hub
+    fan(toHub + deg(30), deg(30), right);                           // right of the hub edge
+    fan(toHub + Math.PI - deg(75), deg(150), new Array(out).fill(null));
+    layout.hairs.set(sp.id, { h, hairs });
+    const gid = `hair-grad-${i}`;
+    const grad = el('radialGradient', { id: gid, gradientUnits: 'userSpaceOnUse', cx: sp.x.toFixed(2), cy: sp.y.toFixed(2), r: (sp.r + h).toFixed(2) }, hairDefs);
+    el('stop', { offset: (sp.r / (sp.r + h)).toFixed(4), 'stop-color': '#B9C2CA', 'stop-opacity': 0.9 }, grad);
+    el('stop', { offset: 1, 'stop-color': '#B9C2CA', 'stop-opacity': 0 }, grad);
+    const hgrad = el('radialGradient', { id: gid + '-hi', gradientUnits: 'userSpaceOnUse', cx: sp.x.toFixed(2), cy: sp.y.toFixed(2), r: (sp.r + h).toFixed(2) }, hairDefs);
+    el('stop', { offset: (sp.r / (sp.r + h)).toFixed(4), 'stop-color': '#3D6BE5', 'stop-opacity': 1 }, hgrad);
+    el('stop', { offset: 1, 'stop-color': '#3D6BE5', 'stop-opacity': 0 }, hgrad);
+    const g = el('g', { stroke: `url(#${gid})` }, gHairs);
+    for (const hr of hairs) {
+      hr.hiStroke = `url(#${gid}-hi)`;
+      const { angle } = hr;
+      const c = Math.cos(angle), sn = Math.sin(angle);
+      hr.el = el('line', { class: 'hair',
+        x1: (sp.x + c * sp.r).toFixed(2), y1: (sp.y + sn * sp.r).toFixed(2),
+        x2: (sp.x + c * (sp.r + h)).toFixed(2), y2: (sp.y + sn * (sp.r + h)).toFixed(2) }, g);
+    }
+  });
+}
+
+/* Hover links: connect a spoke's inward hairs to the matching hairs of the spokes they stand for.
+   Each connection is a biarc (two tangent-continuous circular arcs) so it leaves one hair and
+   enters the other exactly along the hair directions. A spoke directly opposite is reached by an
+   S-curve through the hub: two biarcs meeting at an invisible hair of the hub that points into
+   the gap beside the real edges, fading out as they approach the hub. */
+const f2 = n => n.toFixed(2);
+function arcTo(P, t, Q) {
+  const dx = Q.x - P.x, dy = Q.y - P.y, c = Math.hypot(dx, dy);
+  const cross = t.x * dy - t.y * dx;
+  if (c < 1e-6 || Math.abs(cross) < 1e-6) return `L${f2(Q.x)} ${f2(Q.y)}`;
+  const r = (c * c) / (2 * Math.abs(cross));
+  const large = (t.x * dx + t.y * dy) < 0 ? 1 : 0;
+  return `A${f2(r)} ${f2(r)} 0 ${large} ${cross > 0 ? 1 : 0} ${f2(Q.x)} ${f2(Q.y)}`;
+}
+// t1: unit tangent leaving P; t2: unit tangent (direction of travel) arriving at Q
+function biarc(P, t1, Q, t2) {
+  const wx = P.x - Q.x, wy = P.y - Q.y, sx = t1.x + t2.x, sy = t1.y + t2.y;
+  const ww = wx * wx + wy * wy, ws = wx * sx + wy * sy, ss = sx * sx + sy * sy;
+  let lam;
+  if (Math.abs(4 - ss) < 1e-9) lam = Math.abs(ws) < 1e-9 ? -1 : -ww / (2 * ws);
+  else lam = (ws + Math.sqrt(ws * ws + (4 - ss) * ww)) / (4 - ss);
+  if (!(lam > 0) || !isFinite(lam)) {                              // degenerate: fall back to a cubic
+    const L = Math.sqrt(ww) / 3;
+    return `C${f2(P.x + t1.x * L)} ${f2(P.y + t1.y * L)} ${f2(Q.x - t2.x * L)} ${f2(Q.y - t2.y * L)} ${f2(Q.x)} ${f2(Q.y)}`;
+  }
+  const A = { x: P.x + lam * t1.x, y: P.y + lam * t1.y }, B = { x: Q.x - lam * t2.x, y: Q.y - lam * t2.y };
+  const J = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+  const jl = Math.hypot(B.x - A.x, B.y - A.y) || 1;
+  const tJ = { x: (B.x - A.x) / jl, y: (B.y - A.y) / jl };
+  return arcTo(P, t1, J) + arcTo(J, tJ, Q);
+}
+function hairGeom(node, angle, h) {
+  const u = { x: Math.cos(angle), y: Math.sin(angle) };
+  return { u, base: { x: node.x + u.x * node.r, y: node.y + u.y * node.r }, tip: { x: node.x + u.x * (node.r + h), y: node.y + u.y * (node.r + h) } };
+}
+function showLinks(id) {
+  gLinks.innerHTML = '';
+  const layout = app.layout;
+  if (!layout || !layout.hairs) return;
+  if (!layout.hairs.has(id)) { highlightEdge(id, true); return; }
+  const S = layout.nodes.get(id), C = layout.nodes.get(layout.centerId);
+  highlightEdge(id, true);
+  const { h, hairs } = layout.hairs.get(id);
+  const TAU = 2 * Math.PI;
+  let centerGrad = null;
+  for (const hr of hairs) {
+    if (!hr.target) { if (hr.el) { hr.el.classList.add('hi'); hr.el.style.stroke = hr.hiStroke; } continue; }
+    const T = layout.nodes.get(hr.target);
+    const a = hairGeom(S, hr.angle, h);
+    // the matching hair on the other spoke, or a virtual one aimed back at us if it has none
+    const th = layout.hairs.get(T.id);
+    const back = th && th.hairs.find(x => x.target === id);
+    // no matching hair back means the connection is one-way: aim at the circle and leave room for an arrowhead
+    const b = back ? hairGeom(T, back.angle, th.h) : hairGeom(T, Math.atan2(a.base.y - T.y, a.base.x - T.x), ARROW);
+    const end = back ? b.base : b.tip;
+    const tIn = { x: -b.u.x, y: -b.u.y };
+    const arrowAttrs = back ? {} : { 'marker-end': 'url(#arrow-hi)' };
+    if (hr.el) hr.el.style.visibility = 'hidden';
+    if (back && back.el) back.el.style.visibility = 'hidden';
+    const delta = ((T.angle - S.angle) % TAU + TAU) % TAU;
+    if (Math.abs(delta - Math.PI) < 1e-6) {
+      // S-curve through the hub via an invisible hub hair in the gap clockwise of our spoke
+      const gamma = S.angle + Math.PI / layout.n, hc = C.r * 0.7;
+      const g1 = hairGeom(C, gamma, hc), g2 = hairGeom(C, gamma + Math.PI, hc);
+      if (!centerGrad) {
+        const R0 = C.r, R1 = C.r + hc + 24;
+        centerGrad = el('radialGradient', { id: 'link-center-grad', gradientUnits: 'userSpaceOnUse', cx: f2(C.x), cy: f2(C.y), r: f2(R1) }, hairDefs);
+        el('stop', { offset: (R0 / R1).toFixed(4), 'stop-color': '#3D6BE5', 'stop-opacity': 0 }, centerGrad);
+        el('stop', { offset: ((C.r + hc) / R1).toFixed(4), 'stop-color': '#3D6BE5', 'stop-opacity': 0.35 }, centerGrad);
+        el('stop', { offset: 1, 'stop-color': '#3D6BE5', 'stop-opacity': 1 }, centerGrad);
+      }
+      const d1 = `M${f2(a.base.x)} ${f2(a.base.y)}` + biarc(a.base, a.u, g1.base, { x: -g1.u.x, y: -g1.u.y });
+      const d2 = `M${f2(g2.base.x)} ${f2(g2.base.y)}` + biarc(g2.base, g2.u, end, tIn);
+      el('path', { class: 'link', d: d1 }, gLinks).style.stroke = 'url(#link-center-grad)';
+      el('path', { class: 'link', d: d2, ...arrowAttrs }, gLinks).style.stroke = 'url(#link-center-grad)';
+    } else {
+      const d = `M${f2(a.base.x)} ${f2(a.base.y)}` + biarc(a.base, a.u, end, tIn);
+      el('path', { class: 'link', d, ...arrowAttrs }, gLinks);
+    }
+  }
+}
+function highlightEdge(id, on) {
+  const line = gEdges.querySelector(`.edge[data-to="${CSS.escape(id)}"]`);
+  if (!line) return;
+  // highlights mean "you can jump there from this node": a hub->spoke-only edge doesn't qualify
+  if (on && !app.layout.graph.out.get(id).has(app.layout.centerId)) return;
+  line.classList.toggle('hi', on);
+  line.style.opacity = on ? 'var(--hi-opacity)' : 1;   // setEdge writes an inline opacity, so the class alone can't lower it
+  if (line.hasAttribute('marker-end')) line.setAttribute('marker-end', on ? 'url(#arrow-hi)' : 'url(#arrow)');
+}
+function clearLinks() {
+  gLinks.innerHTML = '';
+  for (const line of gEdges.querySelectorAll('.edge.hi')) { line.classList.remove('hi'); line.style.opacity = 1; if (line.hasAttribute('marker-end')) line.setAttribute('marker-end', 'url(#arrow)'); }
+  const g = document.getElementById('link-center-grad'); if (g) g.remove();
+  for (const line of gHairs.querySelectorAll('.hair')) { line.style.visibility = ''; line.style.stroke = ''; line.classList.remove('hi'); }
 }
 
 function renderEdgeLabel(layout, e, c, nb, line) {
@@ -804,7 +996,7 @@ function animateTo(graph, oldLayout, newId, done) {
   const newLayout = computeLayout(graph, newId);
   if (reducedMotion) { renderStatic(newLayout, false); done(newLayout); return; }
   animating = true;
-  gLabels.innerHTML = ''; gEdges.innerHTML = ''; gNodes.innerHTML = '';
+  gLabels.innerHTML = ''; gEdges.innerHTML = ''; gNodes.innerHTML = ''; gHairs.innerHTML = ''; hairDefs.innerHTML = ''; gLinks.innerHTML = '';
   const oldC = oldLayout.nodes.get(oldLayout.centerId);
   const newInOld = oldLayout.nodes.get(newId);
   const ids = new Set([...oldLayout.nodes.keys(), ...newLayout.nodes.keys()]);
@@ -1164,6 +1356,16 @@ document.addEventListener('click', e => { if (!gameMenu.hidden && !e.target.clos
 gNodes.addEventListener('click', e => {
   const g = e.target.closest('.node.nbr'); if (g) goTo(g.dataset.id);
 });
+gNodes.addEventListener('pointerover', e => {
+  const g = e.target.closest('.node.nbr'); if (g && !animating) showLinks(g.dataset.id);
+});
+gNodes.addEventListener('pointerout', e => {
+  const g = e.target.closest('.node.nbr'); if (!g) return;
+  if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.node.nbr') === g) return;
+  clearLinks();
+});
+gNodes.addEventListener('focusin', e => { const g = e.target.closest('.node.nbr'); if (g && !animating) showLinks(g.dataset.id); });
+gNodes.addEventListener('focusout', clearLinks);
 gNodes.addEventListener('keydown', e => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   const g = e.target.closest('.node.nbr'); if (g) { e.preventDefault(); goTo(g.dataset.id); }
